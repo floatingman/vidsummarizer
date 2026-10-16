@@ -1,0 +1,11 @@
+# build artifacts
+build/
+dist/
+__pycache__/
+*.pyc
+
+# runtime data (workdir contents)
+audio/
+transcripts/
+summaries/
+models/

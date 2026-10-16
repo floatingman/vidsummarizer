@@ -1,0 +1,311 @@
+"""Command-line interface: subcommand parsing and dispatch.
+
+    yt-pipeline <url>                full pipeline (same as 'run')
+    yt-pipeline run <url>            mp3 -> transcript -> summary
+    yt-pipeline fetch <url>          mp3 only
+    yt-pipeline transcribe <url>     transcript only (the old yt-transcribe)
+    yt-pipeline summarize <id|url|file|'--all'>   (the old yt-summarize)
+    yt-pipeline doctor               check this machine for missing tools
+"""
+
+import argparse
+import os
+import sys
+
+from . import VERSION
+from .common import PROG, resolve_workdir
+
+COMMANDS = ("run", "fetch", "transcribe", "summarize", "doctor")
+
+EPILOG = """examples:
+  yt-pipeline https://youtu.be/iCvmsMzlF7o           full pipeline in one command
+  yt-pipeline run iCvmsMzlF7o --timestamps          same, explicit 'run'
+  yt-pipeline fetch jNQXAC9IVRw                      only download the mp3
+  yt-pipeline transcribe jNQXAC9IVRw --lang de       only the transcript
+  yt-pipeline summarize iCvmsMzlF7o                  only the summary
+  yt-pipeline summarize --all --out ~/vault/notes    summarize every transcript
+  yt-pipeline doctor                                 check required tools
+
+data (audio/, transcripts/, summaries/, models/) lives next to the
+executable by default; change it with --workdir DIR or $YT_WORKDIR."""
+
+
+def add_workdir(p):
+    p.add_argument("--workdir", metavar="DIR", default=None,
+                   help="directory for audio/, transcripts/, summaries/ and "
+                        "models/ (default: $YT_WORKDIR, else next to the "
+                        "executable)")
+
+
+def add_transcribe_opts(p, out_flag=("-o", "--out"), out_help=None):
+    """Options of the transcription stage (shared by 'transcribe' and 'run')."""
+    p.add_argument("video", help="YouTube video URL or 11-character video id")
+    p.add_argument(*out_flag, type=str, default=None, metavar="FILE",
+                   help=out_help or "output transcript file "
+                        "(default: <workdir>/transcripts/<video_id>.txt)")
+    p.add_argument("--audio-dir", type=str, default=None,
+                   help="directory for downloaded mp3 files "
+                        "(default: <workdir>/audio)")
+    p.add_argument("--keep-audio", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="keep the downloaded mp3 (default: --keep-audio)")
+    p.add_argument("-m", "--model", type=str, default=None,
+                   help=f"path to whisper GGML model (default: "
+                        f"<workdir>/models/ggml-small.bin; auto-downloaded "
+                        f"if missing)")
+    p.add_argument("--model-url", default=None,
+                   help="override URL used to auto-download a missing model")
+    p.add_argument("-l", "--lang", default="auto",
+                   help="spoken language, e.g. en, de (default: auto-detect)")
+    p.add_argument("-t", "--threads", type=int, default=8,
+                   help="whisper CPU threads (default: 8)")
+    p.add_argument("--timestamps", action="store_true",
+                   help="prefix each transcript paragraph with a [MM:SS] marker")
+    p.add_argument("--redownload", action="store_true",
+                   help="re-download audio even if the mp3 already exists")
+    p.add_argument("--ytdlp", default="",
+                   help="extra yt-dlp arguments, e.g. "
+                        "--ytdlp '--cookies-from-browser firefox'")
+
+
+def add_fetch_opts(p):
+    p.add_argument("video", help="YouTube video URL or 11-character video id")
+    p.add_argument("--audio-dir", type=str, default=None,
+                   help="directory for downloaded mp3 files "
+                        "(default: <workdir>/audio)")
+    p.add_argument("--redownload", action="store_true",
+                   help="re-download audio even if the mp3 already exists")
+    p.add_argument("--ytdlp", default="",
+                   help="extra yt-dlp arguments, e.g. "
+                        "--ytdlp '--cookies-from-browser firefox'")
+
+
+def add_summarize_opts(p, run_mode=False):
+    """Options of the summarization stage (shared by 'summarize' and 'run').
+
+    In run_mode the summary-language option is --summary-lang (because --lang
+    is the audio language there) and the model option is --llm-model (because
+    -m/--model is the whisper model there).
+    """
+    if run_mode:
+        p.add_argument("--llm-model", metavar="NAME",
+                       default=os.environ.get("OLLAMA_MODEL", "qwen3.6"),
+                       help="Ollama model tag for summaries "
+                            "(default: qwen3.6; env OLLAMA_MODEL)")
+        p.add_argument("--summary-lang", default=None,
+                       help="force summary language, e.g. en, de (default: "
+                            "the transcript's own language)")
+    else:
+        p.add_argument("--model", metavar="NAME",
+                       default=os.environ.get("OLLAMA_MODEL", "qwen3.6"),
+                       help="Ollama model tag (default: qwen3.6; env OLLAMA_MODEL)")
+        p.add_argument("--lang", default=None,
+                       help="force summary language, e.g. en, de (default: "
+                            "the transcript's own language)")
+    p.add_argument("--host", default=os.environ.get("OLLAMA_HOST",
+                                                    "http://127.0.0.1:11434"),
+                   help="Ollama base URL (default: http://127.0.0.1:11434; "
+                        "env OLLAMA_HOST)")
+    p.add_argument("--max-words", type=int, default=500,
+                   help="hard word cap for the summary (default: 500)")
+    p.add_argument("--chunk-words", type=int, default=1500,
+                   help="words per map-reduce chunk for long transcripts "
+                        "(default: 1500; 0 = never chunk)")
+    p.add_argument("--notes-words", type=int, default=220,
+                   help="word cap for per-chunk notes (default: 220)")
+    p.add_argument("--think", action="store_true",
+                   help="let the model use its thinking mode (slower)")
+    p.add_argument("--timeout", type=float, default=900.0,
+                   help="per-request timeout in seconds (default: 900)")
+    p.add_argument("--max-num-ctx", type=int, default=32768,
+                   help="ceiling for the Ollama context window (default: 32768)")
+    p.add_argument("--force", action="store_true",
+                   help="re-summarize even if a summary already exists")
+    p.add_argument("--stdout", action="store_true",
+                   help="print the markdown note instead of writing a file")
+    p.add_argument("--no-autostart", action="store_true",
+                   help="never start 'ollama serve' ourselves")
+
+
+def build_parser():
+    ap = argparse.ArgumentParser(
+        prog=PROG,
+        description="Local YouTube pipeline: download audio (yt-dlp), "
+                    "transcribe (whisper.cpp), summarize (Ollama). "
+                    "One executable, no cloud APIs.",
+        epilog=EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version",
+                    version=f"{PROG} {VERSION}")
+    sub = ap.add_subparsers(dest="command", metavar="<command>")
+
+    p_run = sub.add_parser(
+        "run", help="full pipeline: URL -> mp3 -> transcript -> summary",
+        description="End to end: download the audio, transcribe it with "
+                    "whisper.cpp, summarize the transcript with the local "
+                    "LLM and write an Obsidian-ready note.",
+        epilog="Calling the executable with just a URL or video id "
+               "(no subcommand) does the same thing.",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    add_transcribe_opts(
+        p_run, out_flag=("-o", "--transcript-out"),
+        out_help="output transcript file (default: "
+                 "<workdir>/transcripts/<video_id>.txt)")
+    add_summarize_opts(p_run, run_mode=True)
+    p_run.add_argument("--out", metavar="DIR", default=None,
+                       help="output directory for notes "
+                            "(default: <workdir>/summaries)")
+    add_workdir(p_run)
+
+    p_fetch = sub.add_parser(
+        "fetch", help="download the audio (mp3) only",
+        description="Download the video's audio track as mp3; no "
+                    "transcription, no summary.")
+    add_fetch_opts(p_fetch)
+    add_workdir(p_fetch)
+
+    p_tr = sub.add_parser(
+        "transcribe", help="URL -> transcript only (old yt-transcribe)",
+        description="Download the audio (or reuse the cached mp3), transcribe "
+                    "it locally with whisper.cpp and write a plain-text "
+                    "transcript.")
+    add_transcribe_opts(p_tr)
+    add_workdir(p_tr)
+
+    p_sum = sub.add_parser(
+        "summarize", help="transcript -> markdown summary only "
+                          "(old yt-summarize)",
+        description="Summarize transcript(s) with the local LLM (Ollama) "
+                    "into Obsidian-ready markdown notes.",
+        epilog="examples:\n"
+               "  yt-pipeline summarize iCvmsMzlF7o\n"
+               "  yt-pipeline summarize --all\n"
+               "  yt-pipeline summarize ~/notes/transcript.txt "
+               "--out ~/vault/Video\\ notes\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_sum.add_argument("targets", nargs="*",
+                       help="transcript .txt file, 11-char video id, or "
+                            "YouTube URL")
+    p_sum.add_argument("--all", action="store_true",
+                       help="summarize every transcript in the transcripts dir "
+                            "that has no summary yet")
+    p_sum.add_argument("--transcripts", metavar="DIR", default=None,
+                       help="transcripts directory (default: "
+                            "$YT_TRANSCRIPTS_DIR, else <workdir>/transcripts)")
+    p_sum.add_argument("--out", metavar="DIR", default=None,
+                       help="output directory for notes (default: "
+                            "<workdir>/summaries)")
+    add_summarize_opts(p_sum)
+    add_workdir(p_sum)
+
+    p_doc = sub.add_parser(
+        "doctor", help="check this machine for everything the pipeline needs",
+        description="Check Python, the external tools (yt-dlp, ffmpeg, "
+                    "whisper-cli, ollama), the Ollama server and model, and "
+                    "the data directory. Reports clearly what is missing and "
+                    "how to install it.")
+    p_doc.add_argument("--host", default=os.environ.get(
+        "OLLAMA_HOST", "http://127.0.0.1:11434"),
+        help="Ollama base URL (default: http://127.0.0.1:11434)")
+    p_doc.add_argument("--llm-model", metavar="NAME",
+                       default=os.environ.get("OLLAMA_MODEL", "qwen3.6"),
+                       help="Ollama model tag to check (default: qwen3.6)")
+    add_workdir(p_doc)
+
+    return ap
+
+
+# --------------------------------------------------------------------------- #
+# Command implementations that live in their own modules
+# --------------------------------------------------------------------------- #
+
+def cmd_transcribe(args):
+    from .transcribe import transcribe_video
+    workdir = resolve_workdir(args.workdir)
+    transcribe_video(args, workdir)
+    return 0
+
+
+def cmd_summarize(args):
+    from .summarize import (output_path, parse_transcript, resolve_transcripts,
+                            summarized_video_ids, summarize_targets)
+    from .common import die, log
+    workdir = resolve_workdir(args.workdir)
+
+    if args.transcripts:
+        dirs = [args.transcripts]
+    elif os.environ.get("YT_TRANSCRIPTS_DIR"):
+        dirs = [os.environ["YT_TRANSCRIPTS_DIR"]]
+    else:
+        dirs = [str(workdir / "transcripts")]
+    transcripts_dirs = []
+    for d in (os.path.abspath(x) for x in dirs):
+        if d not in transcripts_dirs:
+            transcripts_dirs.append(d)
+    args.transcripts_dirs = transcripts_dirs
+    args.out = args.out or str(workdir / "summaries")
+
+    if args.all:
+        import os as _os
+        src = transcripts_dirs[0]
+        if not _os.path.isdir(src):
+            die(f"transcripts directory not found: {src}")
+        files = sorted(_os.path.join(src, f) for f in _os.listdir(src)
+                       if f.endswith(".txt"))
+        if not files:
+            die(f"no .txt transcripts in {src}")
+        done = summarized_video_ids(args.out)
+        targets = []
+        for f in files:
+            meta, _ = parse_transcript(open(f, encoding="utf-8",
+                                            errors="replace").read())
+            vid = meta.get("video_id", "")
+            if vid and vid in done and not args.force:
+                continue
+            if not vid and os.path.exists(
+                    output_path(args.out, meta,
+                                os.path.splitext(os.path.basename(f))[0])) \
+                    and not args.force:
+                continue
+            targets.append(f)
+        skipped = len(files) - len(targets)
+        log(f"found {len(files)} transcripts, {skipped} already summarized, "
+            f"{len(targets)} to do" + (" (--force to redo)" if skipped else ""))
+        if not targets:
+            log("nothing to do.")
+            return 0
+    else:
+        if not args.targets:
+            build_parser().error(
+                "summarize: give a transcript file / video id / URL, or use --all")
+        targets = resolve_transcripts(args, args.targets)
+
+    return summarize_targets(targets, args)
+
+
+def main(argv=None):
+    if argv is None:
+        argv = sys.argv[1:]
+    # 'yt-pipeline <url>' means 'yt-pipeline run <url>'
+    if argv and not argv[0].startswith("-") and argv[0] not in COMMANDS:
+        argv = ["run"] + list(argv)
+
+    args = build_parser().parse_args(argv)
+    if args.command is None:
+        build_parser().print_help()
+        raise SystemExit(2)
+
+    from .pipeline import cmd_doctor, cmd_fetch, cmd_run
+    handlers = {
+        "run": cmd_run,
+        "fetch": cmd_fetch,
+        "transcribe": cmd_transcribe,
+        "summarize": cmd_summarize,
+        "doctor": cmd_doctor,
+    }
+    rc = handlers[args.command](args)
+    raise SystemExit(rc if isinstance(rc, int) else 0)
+
+
+if __name__ == "__main__":
+    main()
