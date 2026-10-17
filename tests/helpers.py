@@ -28,7 +28,8 @@ FAKE_BIN = TESTS / "fakes"
 # Env vars that change the tool's behavior; cleared for every CLI run so
 # tests are deterministic regardless of the developer's environment.
 LEAKY_ENV_VARS = ("YT_WORKDIR", "YT_TRANSCRIPTS_DIR", "YT_JOBS",
-                  "OLLAMA_HOST", "OLLAMA_MODEL", "YT_PROMPTS_DIR")
+                  "OLLAMA_HOST", "OLLAMA_MODEL", "OLLAMA_JUDGE_MODEL",
+                  "YT_PROMPTS_DIR")
 
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +115,11 @@ class _FakeOllamaHandler(BaseHTTPRequestHandler):
         with self.fake.lock:
             self.fake.chat_requests.append(body)
             fail = self.fake.fail_queue.pop(0) if self.fake.fail_queue else None
-            content = self.fake.next_content()
+            content = None
+            if self.fake.responder is not None:
+                content = self.fake.responder(body)  # may return None
+            if content is None:
+                content = self.fake.next_content()
         if fail is not None:
             self._json(fail.get("body", {"error": "boom"}),
                        status=fail.get("status", 500))
@@ -141,6 +146,10 @@ class FakeOllamaServer:
       .fail_queue       queue of {"status": int, "body": dict} failures to
                         return for /api/chat before succeeding again
       .chat_requests    every /api/chat request body, in order
+      .responder        optional callable(body_dict) -> content str or None;
+                        takes precedence over .contents when it returns a
+                        string (used to answer summary vs judge calls
+                        differently)
     """
 
     def __init__(self, models=("qwen3.6",)):
@@ -149,6 +158,7 @@ class FakeOllamaServer:
         self.chat_requests = []
         self.contents = []
         self.fail_queue = []
+        self.responder = None
         self.default_content = ("## Overview\n\nCanned overview: the fixture "
                                 "video shows the pipeline working end to end.")
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), _FakeOllamaHandler)
@@ -170,6 +180,7 @@ class FakeOllamaServer:
             self.chat_requests.clear()
             self.contents.clear()
             self.fail_queue.clear()
+            self.responder = None
 
     def stop(self):
         self._httpd.shutdown()

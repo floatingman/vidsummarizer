@@ -23,14 +23,16 @@ fi
 VERSION=$("$PYTHON" -c "import sys; sys.path.insert(0, '.'); from ytpipeline import VERSION; print(VERSION)")
 
 rm -rf build dist
-mkdir -p build/ytpipeline/prompts dist
+mkdir -p build/ytpipeline/prompts build/ytpipeline/benchset/transcripts dist
 
 # Stage only the package (no README, .git, data dirs) into the archive root.
 cp ytpipeline/*.py build/ytpipeline/
 
-# The summarizer's prompt variants are data of the package itself,
-# so the executable stays self-contained.
+# The summarizer's prompt variants and the benchmark set are data of the
+# package itself, so the executable stays self-contained.
 cp prompts/*.json build/ytpipeline/prompts/
+cp benchmarks/set.json build/ytpipeline/benchset/
+cp benchmarks/transcripts/*.txt build/ytpipeline/benchset/transcripts/
 
 "$PYTHON" -m zipapp build \
     --python "/usr/bin/env python3" \

@@ -1,0 +1,19 @@
+title: From two scripts to one pipeline, a short history
+channel: Fixtures for the benchmark set
+upload_date: 2025-12-18
+duration: 07:05
+video_id: BenchOvervie1
+url: https://www.youtube.com/watch?v=BenchOvervie1
+language: en
+model: ggml-small.bin
+tool: yt-pipeline 2.1.0 (local whisper.cpp)
+
+Today I want to tell a small story about how a hobby project grew, because I think the pattern is more common than the project itself.
+
+It started with two little tools that lived next to each other. One downloaded audio from video sites and transcribed it on the same machine, no cloud services anywhere. The other took a transcript and asked a local language model to write a compact note out of it, the kind of note that drops straight into a personal knowledge base. Each tool was fine on its own, and each had its own folder, its own copy of the settings, and its own idea of where files belonged.
+
+The friction showed up exactly where the tools met. To go from a video to a note you ran the first tool, remembered which folder the transcript landed in, and pointed the second tool at it. Half the support questions I got were about paths and folders, not about transcription or summarization.
+
+So the two tools merged into one pipeline with a single command. One work directory now holds everything: the downloaded audio, the transcripts, the finished notes, and even the transcription model. The merge kept both file formats unchanged, so old transcripts still work and old notes are still valid. A bonus appeared almost by accident: once both stages lived in the same process, batches of videos could overlap download, transcription and summarization, so a queue of ten videos finishes noticeably faster than before.
+
+The lesson I would keep is this: when two tools keep touching each other's data, the boundary between them is the actual product. Move the boundary into one place, version the artifacts you pass along, and measure the quality of what comes out, or you will never know whether a change made things better or merely different.

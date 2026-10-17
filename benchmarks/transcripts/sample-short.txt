@@ -1,0 +1,13 @@
+title: Fixture Talk - Testing Pipelines
+channel: Fixture Channel
+upload_date: 2024-01-02
+duration: 01:01
+video_id: FxTureVid01
+url: https://www.youtube.com/watch?v=FxTureVid01
+language: en
+model: ggml-small.bin
+tool: yt-pipeline 2.1.0 (local whisper.cpp)
+
+Hello. This is a short test recording for the yt pipeline test suite.
+
+The quick brown fox jumps over the lazy dog. This second paragraph gives the summarizer a little more to work with, and it mentions a concrete tool and a number: 42.

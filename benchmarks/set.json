@@ -1,0 +1,12 @@
+{
+  "name": "default",
+  "description": "Fixed benchmark set for the summarizer prompts. sample-short.txt is the test-suite fixture (tests/fixtures/transcript/sample.txt); the other two transcripts extend it with an actionable how-to video and a conceptual overview talk, so both summary kinds are exercised.",
+  "cases": [
+    {"file": "transcripts/sample-short.txt", "kind": "overview",
+     "must_contain": ["42"]},
+    {"file": "transcripts/howto-tls.txt", "kind": "actionable",
+     "must_contain": ["certbot", "443"]},
+    {"file": "transcripts/overview-history.txt", "kind": "overview",
+     "must_contain": []}
+  ]
+}
