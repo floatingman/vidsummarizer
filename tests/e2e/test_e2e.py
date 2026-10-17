@@ -360,6 +360,37 @@ class TestSummarize(E2ETest):
         self.assertEqual(r.returncode, 1)
         self.assertIn("cannot reach Ollama", r.stderr)
 
+    def test_summarize_style_selects_prompt_and_its_word_cap(self):
+        self.seed_transcript()
+        r = self.cli("summarize", "FxTureVid01", "--style", "short",
+                     *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        user = self.ollama.chat_requests[-1]["messages"][1]["content"]
+        self.assertIn("SHORT OVERVIEW", user)          # the style's prompt
+        self.assertIn("at most 150 words", user)       # the style's own cap
+        note = (self.workdir / "summaries" /
+                "Fixture Talk - Testing Pipelines.md").read_text("utf-8")
+        self.assertIn('prompt: "short"', note)         # recorded per note
+        self.assertIn("## Overview", note)  # canned reply, Obsidian markdown
+
+    def test_summarize_style_explicit_max_words_wins(self):
+        self.seed_transcript()
+        r = self.cli("summarize", "FxTureVid01", "--style", "short",
+                     "--max-words", "100", *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        user = self.ollama.chat_requests[-1]["messages"][1]["content"]
+        self.assertIn("at most 100 words", user)
+        self.assertNotIn("at most 150 words", user)
+
+    def test_summarize_unknown_style_lists_the_styles(self):
+        self.seed_transcript()
+        r = self.cli("summarize", "FxTureVid01", "--style", "nope",
+                     *self.summarize_args())
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("unknown style 'nope'", r.stderr)
+        for name in ("actionable", "short", "study-guide"):
+            self.assertIn(name, r.stderr)
+
 
 class TestRunPipeline(E2ETest):
     def run_args(self):
@@ -406,19 +437,58 @@ class TestRunPipeline(E2ETest):
         self.assertFalse((self.workdir / "summaries" /
                           "Me at the zoo (yt-pipeline fixture).md").exists())
 
+    def test_run_with_style(self):
+        r = self.cli("run", URL, "--style", "study-guide", *self.run_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        note = (self.workdir / "summaries" /
+                "Me at the zoo (yt-pipeline fixture).md")
+        self.assertTrue(note.exists())
+        self.assertIn('prompt: "study-guide"', note.read_text("utf-8"))
+        user = self.ollama.chat_requests[-1]["messages"][1]["content"]
+        self.assertIn("STUDY GUIDE", user)         # the style's prompt ...
+        self.assertIn("at most 700 words", user)   # ... and its own cap
+
 
 class TestZipapp(unittest.TestCase):
-    """Optional check of the built single-file executable when present."""
+    """Optional checks of the built single-file executable when present."""
+
+    EXE = FIXTURES.parent.parent / "dist" / "yt-pipeline"
 
     def test_built_executable_reports_version(self):
-        exe = FIXTURES.parent.parent / "dist" / "yt-pipeline"
-        if not exe.exists():
+        if not self.EXE.exists():
             self.skipTest("dist/yt-pipeline not built (run ./build.sh)")
         import subprocess, sys
-        r = subprocess.run([sys.executable, str(exe), "--version"],
+        r = subprocess.run([sys.executable, str(self.EXE), "--version"],
                            capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0)
         self.assertIn("yt-pipeline", r.stdout)
+
+    def test_built_executable_carries_the_styles(self):
+        # the styles are prompt variant files packed into the executable:
+        # --style must work with no checkout and no prompts dir anywhere
+        if not self.EXE.exists():
+            self.skipTest("dist/yt-pipeline not built (run ./build.sh)")
+        import subprocess
+        import sys
+        import tempfile
+        from tests.helpers import FakeOllamaServer, fake_env
+        server = FakeOllamaServer()
+        self.addCleanup(server.stop)
+        with tempfile.TemporaryDirectory(prefix="ytp-zip-") as tmp:
+            tdir = Path(tmp) / "transcripts"
+            tdir.mkdir()
+            (tdir / "FxTureVid01.txt").write_text(FIXTURE_TRANSCRIPT,
+                                                  encoding="utf-8")
+            r = subprocess.run(
+                [sys.executable, str(self.EXE), "summarize", "FxTureVid01",
+                 "--style", "short", "--stdout", "--no-autostart",
+                 "--host", server.host, "--workdir", tmp],
+                env=fake_env(Path(tmp)), capture_output=True, text=True,
+                errors="replace", timeout=120)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        user = server.chat_requests[-1]["messages"][1]["content"]
+        self.assertIn("SHORT OVERVIEW", user)
+        self.assertIn("at most 150 words", user)
 
 
 if __name__ == "__main__":

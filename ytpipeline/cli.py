@@ -5,6 +5,8 @@
     yt-pipeline fetch <urls/ids>...    mp3 only
     yt-pipeline transcribe <urls/ids>  transcript only (the old yt-transcribe)
     yt-pipeline summarize <id|url|file|'--all'>   (the old yt-summarize)
+    yt-pipeline benchmark [variants]   score prompt variants, compare, report
+    yt-pipeline prompts <list|show|new|promote>  manage prompt variants
     yt-pipeline doctor                 check this machine for missing tools
 
 Every video-taking command accepts several videos at once: as several
@@ -19,7 +21,8 @@ import sys
 from . import VERSION
 from .common import PROG, die, resolve_workdir
 
-COMMANDS = ("run", "fetch", "transcribe", "summarize", "doctor")
+COMMANDS = ("run", "fetch", "transcribe", "summarize", "benchmark",
+            "prompts", "doctor")
 
 EPILOG = """examples:
   yt-pipeline https://youtu.be/iCvmsMzlF7o           full pipeline in one command
@@ -30,6 +33,10 @@ EPILOG = """examples:
   yt-pipeline transcribe jNQXAC9IVRw --lang de       only the transcript
   yt-pipeline summarize iCvmsMzlF7o                  only the summary
   yt-pipeline summarize --all --out ~/vault/notes    summarize every transcript
+  yt-pipeline summarize iCvmsMzlF7o --style short   same video, other style
+  yt-pipeline benchmark                               score every prompt variant
+  yt-pipeline prompts new tighter                     add a prompt variant
+  yt-pipeline prompts promote tighter                 make a variant the default
   yt-pipeline doctor                                 check required tools
 
 data (audio/, transcripts/, summaries/, models/) lives next to the
@@ -131,6 +138,13 @@ def add_fetch_opts(p):
     add_batch_opts(p)
 
 
+def add_prompts_dir_opt(p):
+    p.add_argument("--prompts-dir", metavar="DIR", default=None,
+                   help="directory with prompt variant *.json files "
+                        "(default: $YT_PROMPTS_DIR, else <workdir>/prompts "
+                        "if it has any, else the bundled copy)")
+
+
 def add_summarize_opts(p, run_mode=False):
     """Options of the summarization stage (shared by 'summarize' and 'run').
 
@@ -157,8 +171,16 @@ def add_summarize_opts(p, run_mode=False):
                                                     "http://127.0.0.1:11434"),
                    help="Ollama base URL (default: http://127.0.0.1:11434; "
                         "env OLLAMA_HOST)")
-    p.add_argument("--max-words", type=int, default=500,
-                   help="hard word cap for the summary (default: 500)")
+    p.add_argument("--style", metavar="NAME", default=None,
+                   help="summary style: the shape the note takes, chosen "
+                        "per run (built-in: actionable, short, study-guide; "
+                        "any other prompt variant name works too; default: "
+                        "the standard actionable-or-overview summary). A "
+                        "style may carry its own word cap; see README "
+                        "'Summary styles'")
+    p.add_argument("--max-words", type=int, default=None,
+                   help="hard word cap for the summary (default: 500, or "
+                        "the selected style's own cap)")
     p.add_argument("--chunk-words", type=int, default=1500,
                    help="words per map-reduce chunk for long transcripts "
                         "(default: 1500; 0 = never chunk)")
@@ -176,6 +198,7 @@ def add_summarize_opts(p, run_mode=False):
                    help="print the markdown note instead of writing a file")
     p.add_argument("--no-autostart", action="store_true",
                    help="never start 'ollama serve' ourselves")
+    add_prompts_dir_opt(p)
 
 
 def build_parser():
@@ -212,7 +235,6 @@ def build_parser():
                        help="output directory for notes "
                             "(default: <workdir>/summaries)")
     add_workdir(p_run)
-
     p_fetch = sub.add_parser(
         "fetch", help="download the audio (mp3) only",
         description="Download the video's audio track as mp3; no "
@@ -236,6 +258,7 @@ def build_parser():
         epilog="examples:\n"
                "  yt-pipeline summarize iCvmsMzlF7o\n"
                "  yt-pipeline summarize --all\n"
+               "  yt-pipeline summarize iCvmsMzlF7o --style study-guide\n"
                "  yt-pipeline summarize ~/notes/transcript.txt "
                "--out ~/vault/Video\\ notes\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -253,6 +276,95 @@ def build_parser():
                             "<workdir>/summaries)")
     add_summarize_opts(p_sum)
     add_workdir(p_sum)
+
+    p_bm = sub.add_parser(
+        "benchmark", help="score prompt variants on the benchmark set",
+        description="Run the summarizer over the fixed benchmark set of "
+                    "transcripts with one or more prompt variants, score "
+                    "every summary (automatic checks + a local LLM judge "
+                    "rating faithfulness, actionability and clarity) and "
+                    "write a comparison report. The winning variant is "
+                    "only *suggested*; make it the default with "
+                    "'yt-pipeline prompts promote'.",
+        epilog="examples:\n"
+               "  yt-pipeline benchmark\n"
+               "  yt-pipeline benchmark --prompts v1-baseline,tighter\n"
+               "  yt-pipeline benchmark --judge-model llama3.2\n"
+               "  yt-pipeline benchmark --min-overall 3.5   # quality gate\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_bm.add_argument("--prompts", metavar="A,B", default=None,
+                      help="prompt variants to compare, comma-separated "
+                           "(default: every variant in the prompts dir)")
+    p_bm.add_argument("--set", metavar="FILE", default=None,
+                      help="benchmark set.json (or its directory; default: "
+                           "<workdir>/benchmarks/set.json, else the "
+                           "bundled copy)")
+    p_bm.add_argument("--model", metavar="NAME",
+                      default=os.environ.get("OLLAMA_MODEL", "qwen3.6"),
+                      help="Ollama model that writes the summaries "
+                           "(default: qwen3.6; env OLLAMA_MODEL)")
+    p_bm.add_argument("--judge-model", metavar="NAME",
+                      default=os.environ.get("OLLAMA_JUDGE_MODEL", None),
+                      help="Ollama model that rates the summaries against "
+                           "the rubric (default: same as --model; env "
+                           "OLLAMA_JUDGE_MODEL)")
+    p_bm.add_argument("--out", metavar="DIR", default=None,
+                      help="report directory (default: "
+                           "<workdir>/benchmarks/results/<timestamp>)")
+    p_bm.add_argument("--min-overall", type=float, default=None,
+                      metavar="SCORE",
+                      help="quality gate: exit non-zero when the ACTIVE "
+                           "variant scores below SCORE or fails an "
+                           "automatic check (used by 'make bench-real')")
+    p_bm.add_argument("--host", default=os.environ.get("OLLAMA_HOST",
+                                                        "http://127.0.0.1:11434"),
+                      help="Ollama base URL (default: "
+                           "http://127.0.0.1:11434; env OLLAMA_HOST)")
+    p_bm.add_argument("--max-words", type=int, default=None,
+                      help="hard word cap for the summaries (default: 500, "
+                           "or the benchmarked variant's own style cap)")
+    p_bm.add_argument("--chunk-words", type=int, default=1500,
+                      help="words per map-reduce chunk (default: 1500; "
+                           "0 = never chunk)")
+    p_bm.add_argument("--notes-words", type=int, default=220,
+                      help="word cap for per-chunk notes (default: 220)")
+    p_bm.add_argument("--think", action="store_true",
+                      help="let the models use thinking mode (slower)")
+    p_bm.add_argument("--timeout", type=float, default=900.0,
+                      help="per-request timeout in seconds (default: 900)")
+    p_bm.add_argument("--max-num-ctx", type=int, default=32768,
+                      help="ceiling for the Ollama context window "
+                           "(default: 32768)")
+    p_bm.add_argument("--no-autostart", action="store_true",
+                      help="never start 'ollama serve' ourselves")
+    add_prompts_dir_opt(p_bm)
+    add_workdir(p_bm)
+
+    p_pr = sub.add_parser(
+        "prompts", help="manage the summarizer's prompt variants",
+        description="The summarizer's prompts live as versioned JSON "
+                    "files (one per variant) in the prompts directory. "
+                    "This command lists, shows, creates and promotes "
+                    "them; 'benchmark' compares them.",
+        epilog="examples:\n"
+               "  yt-pipeline prompts list\n"
+               "  yt-pipeline prompts show v1-baseline\n"
+               "  yt-pipeline prompts new tighter --from v1-baseline\n"
+               "  yt-pipeline prompts promote tighter\n",
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    p_pr.add_argument("action", nargs="?", default="list",
+                      choices=("list", "show", "new", "promote"),
+                      help="list (default), show, new or promote")
+    p_pr.add_argument("name", nargs="?", default=None,
+                      help="variant name (show/new/promote)")
+    p_pr.add_argument("--from", dest="from_variant", default=None,
+                      metavar="VARIANT",
+                      help="variant to copy for 'new' (default: the active "
+                           "one)")
+    p_pr.add_argument("--yes", action="store_true",
+                      help="promote without asking for confirmation")
+    add_prompts_dir_opt(p_pr)
+    add_workdir(p_pr)
 
     p_doc = sub.add_parser(
         "doctor", help="check this machine for everything the pipeline needs",
@@ -280,6 +392,7 @@ def cmd_summarize(args):
                             summarized_video_ids, summarize_targets)
     from .common import die, log
     workdir = resolve_workdir(args.workdir)
+    args.workdir = str(workdir)
 
     if args.transcripts:
         dirs = [args.transcripts]
@@ -332,6 +445,72 @@ def cmd_summarize(args):
     return summarize_targets(targets, args)
 
 
+def cmd_benchmark(args):
+    from .bench import run_benchmark
+    if not args.judge_model:
+        args.judge_model = args.model
+    args.workdir = str(resolve_workdir(args.workdir))
+    return run_benchmark(args)
+
+
+def cmd_prompts(args):
+    from . import prompts as P
+    workdir = str(resolve_workdir(args.workdir))
+    read_dir = P.resolve_prompts_dir(args.prompts_dir, workdir)
+
+    if args.action == "list":
+        active = P.active_name(read_dir)
+        variants = P.list_variants(read_dir)
+        print(f"prompt variants in {read_dir}  (active: {active})")
+        for v in variants:
+            mark = "  [active]" if v.name == active else ""
+            print(f"  {v.name:<24} v{v.version:<3} {v.description}{mark}")
+        print("benchmark them with: yt-pipeline benchmark")
+        return 0
+
+    if not args.name:
+        build_parser().error(f"prompts {args.action}: a variant name is "
+                             "required")
+
+    if args.action == "show":
+        v = P.load_variant(read_dir, args.name)
+        import json as _json
+        print(_json.dumps(v.as_dict(), indent=2, ensure_ascii=False))
+        return 0
+
+    write_dir = P.writable_prompts_dir(read_dir, workdir,
+                                       explicit=args.prompts_dir)
+
+    if args.action == "new":
+        src = args.from_variant or P.active_name(read_dir)
+        path = P.new_variant(read_dir, write_dir, args.name, src)
+        from .common import log
+        log(f"created {path} (copy of {src})")
+        print(f"created {path}\nedit it, then: yt-pipeline benchmark "
+              f"--prompts {args.name}")
+        return 0
+
+    # promote
+    v = P.load_variant(read_dir, args.name)
+    current = P.active_name(read_dir)
+    if v.name == current and read_dir == write_dir:
+        print(f"'{v.name}' is already the active prompt variant")
+        return 0
+    if not args.yes:
+        print(f"Promote '{v.name}' (v{v.version}, {v.description}) to be "
+              f"the active summarizer prompt?\nCurrent active: {current}. "
+              "Future run/summarize calls will use it.")
+        answer = input("promote? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            from .common import log
+            log("promote cancelled")
+            return 1
+    path = P.set_active(write_dir, v.name)
+    from .common import log
+    log(f"active prompt variant is now '{v.name}' ({path})")
+    return 0
+
+
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
@@ -353,6 +532,8 @@ def main(argv=None):
         "fetch": cmd_fetch,
         "transcribe": cmd_transcribe,
         "summarize": cmd_summarize,
+        "benchmark": cmd_benchmark,
+        "prompts": cmd_prompts,
         "doctor": cmd_doctor,
     }
     rc = handlers[args.command](args)

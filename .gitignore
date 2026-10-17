@@ -9,6 +9,9 @@ audio/
 transcripts/
 summaries/
 models/
+benchmarks/results/
 
-# test fixture must not be caught by the runtime-data rules above
+# test fixture and benchmark-set data must not be caught by the
+# runtime-data rules above
 !tests/fixtures/audio/
+!benchmarks/transcripts/

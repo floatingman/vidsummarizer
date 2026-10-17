@@ -14,10 +14,13 @@ yt-pipeline run --batch list.txt -j 2     ...several videos, overlapped jobs
 yt-pipeline fetch <url>        only download the mp3
 yt-pipeline transcribe <url>   only the transcript
 yt-pipeline summarize --all    only the notes (also: by id, url or transcript file)
+yt-pipeline summarize --style short   ...or in another summary style (actionable, study guide, ...)
+yt-pipeline benchmark          score every prompt variant on the benchmark set (LLM judge)
+yt-pipeline prompts            list / show / new / promote the prompt variants
 yt-pipeline doctor             check this machine for everything the pipeline needs
 ```
 
-Transcripts are LLM-readable plain text; summaries are markdown notes of at most 500 words (actionable content preferred, otherwise an overview) that import into an Obsidian vault as regular notes. Full documentation is in the repo's [README](https://github.com/floatingman/yt-pipeline/blob/master/README.md).
+Transcripts are LLM-readable plain text; summaries are markdown notes (at most 500 words by default: actionable content preferred, otherwise an overview, or any installed style via `--style`) that import into an Obsidian vault as regular notes. The summarizer's prompts are versioned JSON variants you can list, compare with `benchmark` and promote. Full documentation is in the repo's [README](https://github.com/floatingman/yt-pipeline/blob/master/README.md).
 
 ## What the target computer needs
 

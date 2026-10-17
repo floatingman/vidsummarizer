@@ -22,6 +22,7 @@ from ytpipeline.summarize import (Ollama, build_note, chunk_text,
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
 SAMPLE = (FIXTURES / "transcript" / "sample.txt").read_text(encoding="utf-8")
+REPO_PROMPTS = Path(__file__).resolve().parent.parent.parent / "prompts"
 
 # A duck-typed Ollama client returning canned chat responses.
 STUB_NOTE = ("## Overview\n\nThis fixture summary mentions the lazy dog and "
@@ -49,10 +50,33 @@ class StubOllama:
 def opts(**over):
     base = dict(out=None, model="stub-model", host="http://unused",
                 timeout=30, no_autostart=True, think=False, max_words=500,
-                lang=None, chunk_words=1500, notes_words=220,
-                max_num_ctx=32768, force=False, stdout=False)
+                lang=None, style=None, chunk_words=1500, notes_words=220,
+                max_num_ctx=32768, force=False, stdout=False,
+                prompts_dir=None, workdir=None)
     base.update(over)
     return ns(**base)
+
+
+# A minimal prompt variant that IS a style (used by the style tests):
+# distinctive markers so tests can tell its prompts from any other's.
+MINI_STYLE = {
+    "name": "mini",
+    "version": 1,
+    "description": "minimal test style",
+    "created": "2026-10-16",
+    "style": {"label": "Mini", "summary": "mini style for tests",
+              "max_words": 42, "fallback_heading": "## Mini summary"},
+    "prompts": {
+        "system": "MINI SYSTEM.",
+        "final": "MINI STYLE FINAL. {lang_instr} Write at most "
+                 "{max_words} words.\n\n{transcript}",
+        "notes": "MINI NOTES {i}/{n} {lang_instr} at most {notes_words} "
+                 "words.\n\n{chunk}",
+        "reduce": "MINI REDUCE {lang_instr} at most {max_words} "
+                  "words.\n\n{notes}",
+        "condense": "MINI CONDENSE {actual} -> {max_words} words.\n\n{text}",
+    },
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -525,6 +549,105 @@ class TestSummarizeTargets(unittest.TestCase):
                                    opts(out=str(self.out)), ollama=stub)
         self.assertEqual(rc, 1)
         self.assertTrue((self.out / "Second Fixture Talk.md").exists())
+
+
+# --------------------------------------------------------------------------- #
+# summary styles (--style): per-run prompt-variant selection + the style's
+# own output expectations (word cap, fallback heading)
+# --------------------------------------------------------------------------- #
+
+class TestStyles(unittest.TestCase):
+    def setUp(self):
+        import shutil
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory(prefix="ytp-style-")
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+        from ytpipeline.prompts import write_variant
+        write_variant(self.dir, MINI_STYLE)
+        # a plain variant so the default (active) path also works in this dir
+        shutil.copyfile(REPO_PROMPTS / "v1-baseline.json",
+                        self.dir / "v1-baseline.json")
+        self.path = self.dir / "FxTureVid01.txt"
+        self.path.write_text(SAMPLE, encoding="utf-8")
+
+    def test_style_selects_its_prompts(self):
+        stub = StubOllama()
+        (note, info), _ = capture(lambda: summarize_transcript(
+            stub, str(self.path), opts(style="mini", prompts_dir=str(self.dir))))
+        self.assertEqual(info["prompt"], "mini")
+        self.assertEqual(stub.calls[0]["system"], "MINI SYSTEM.")
+        self.assertIn("MINI STYLE FINAL.", stub.calls[0]["user"])
+        self.assertIn("The quick brown fox", stub.calls[0]["user"])
+        self.assertIn('prompt: "mini"', note)  # recorded in the frontmatter
+
+    def test_style_word_cap_applies_when_max_words_unset(self):
+        stub = StubOllama()
+        o = opts(style="mini", prompts_dir=str(self.dir), max_words=None)
+        _, _ = capture(lambda: summarize_transcript(stub, str(self.path), o))
+        self.assertIn("Write at most 42 words.", stub.calls[0]["user"])
+        self.assertEqual(o.max_words, 42)  # resolved for the whole call
+
+    def test_explicit_max_words_beats_style_cap(self):
+        stub = StubOllama()
+        o = opts(style="mini", prompts_dir=str(self.dir), max_words=500)
+        _, _ = capture(lambda: summarize_transcript(stub, str(self.path), o))
+        self.assertIn("Write at most 500 words.", stub.calls[0]["user"])
+        self.assertEqual(o.max_words, 500)
+
+    def test_default_without_style_stays_the_active_variant(self):
+        stub = StubOllama()
+        (note, info), _ = capture(lambda: summarize_transcript(
+            stub, str(self.path), opts(prompts_dir=str(self.dir))))
+        self.assertEqual(info["prompt"], "v1-baseline")
+        self.assertIn("Decide what kind of video it is",
+                      stub.calls[0]["user"])  # baseline final prompt
+
+    def test_style_fallback_heading_when_model_omits_heading(self):
+        stub = StubOllama(responses=["Just text, no heading at all."])
+        (note, info), _ = capture(lambda: summarize_transcript(
+            stub, str(self.path), opts(style="mini",
+                                       prompts_dir=str(self.dir))))
+        self.assertIn("## Mini summary", note)  # not the default Overview
+        self.assertNotIn("## Overview", note)
+
+    def test_style_cap_used_in_chunked_reduce_pass_too(self):
+        stub = StubOllama()
+        o = opts(style="mini", prompts_dir=str(self.dir), max_words=None,
+                 chunk_words=10)
+        ((note, info), _) = capture(lambda: summarize_transcript(
+            stub, str(self.path), o))
+        self.assertGreater(info["chunks"], 1)
+        self.assertIn("MINI REDUCE", stub.calls[-1]["user"])
+        self.assertIn("at most 42 words", stub.calls[-1]["user"])
+
+    def test_unknown_style_dies_listing_available_styles(self):
+        err = assert_dies(
+            self,
+            lambda: summarize_transcript(
+                StubOllama(), str(self.path),
+                opts(style="nope", prompts_dir=str(self.dir))),
+            pattern="unknown style 'nope'")
+        self.assertIn("styles: mini (Mini)", err)
+        self.assertIn("v1-baseline", err)  # plain variants listed too
+
+    def test_pinned_prompts_beat_style_selection(self):
+        from ytpipeline.prompts import load_variant
+        pinned = load_variant(self.dir, "v1-baseline")
+        stub = StubOllama()
+        ((note, info), _) = capture(lambda: summarize_transcript(
+            stub, str(self.path),
+            opts(prompts=pinned, style="mini", prompts_dir=str(self.dir))))
+        self.assertEqual(info["prompt"], "v1-baseline")
+        self.assertIn("Decide what kind of video it is", stub.calls[0]["user"])
+
+    def test_style_accepts_plain_variant_names_too(self):
+        # --style takes any variant name, not only ones with style metadata
+        stub = StubOllama()
+        ((note, info), _) = capture(lambda: summarize_transcript(
+            stub, str(self.path),
+            opts(style="v1-baseline", prompts_dir=str(self.dir))))
+        self.assertEqual(info["prompt"], "v1-baseline")
 
 
 # --------------------------------------------------------------------------- #

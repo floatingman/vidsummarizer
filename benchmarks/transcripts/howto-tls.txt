@@ -1,0 +1,23 @@
+title: Free TLS certificates with certbot in fifteen minutes
+channel: Fixtures for the benchmark set
+upload_date: 2025-11-03
+duration: 09:42
+video_id: BenchHowto01
+url: https://www.youtube.com/watch?v=BenchHowto01
+language: en
+model: ggml-small.bin
+tool: yt-pipeline 2.1.0 (local whisper.cpp)
+
+In this video I walk through getting a free TLS certificate onto a small web server, start to finish, so you can do the same on a Saturday morning.
+
+First, pick your machine. Everything here assumes a plain Debian or Ubuntu server with a public IP address, because the certificate authority needs to be able to reach it. Log in over SSH and make sure ports 80 and 443 are open in your firewall; port 80 is only needed during the challenge, but keep it open for renewals.
+
+Second, install certbot from your package manager. One command: apt install certbot. Do not bother with the distribution's nginx or apache plugin packages unless you like surprises; the webroot mode we use here is easier to reason about.
+
+Third, request the certificate. Run certbot certonly with the webroot flag, point it at your server's document root, typically slash var slash www slash html, and list your domain names with lowercase -d, for example -d example.com and -d www.example.com. Certbot answers an HTTP challenge on port 80, proves you control the domain, and drops the certificate and key into slash etc slash letsencrypt slash live slash your domain.
+
+Fourth, wire the certificate into your server. In your server config, point the TLS settings at fullchain dot pem and privkey dot pem from that directory, restart the server, and check that https on port 443 answers with a padlock. Test it from a second device; a phone on mobile data is perfect.
+
+Fifth and most important, plan the renewal, because these certificates are valid for only ninety days. Run certbot renew with the dry-run flag once to confirm the challenge still works, then add a cron entry or a systemd timer that runs certbot renew twice a day at a random minute. Certbot skips renewals until thirty days before expiry, so it is safe to run often. Reload your server after each renewal; the certbot renew hook can do that for you.
+
+That is the whole process: open ports 80 and 443, install certbot, request with webroot, wire up the files, automate the renewal. Costs nothing but fifteen minutes.

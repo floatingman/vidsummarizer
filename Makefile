@@ -8,11 +8,13 @@
 #                    bundled speech fixture (no network)
 #   make test-live   opt-in: a real 19s YouTube video through the real
 #                    pipeline (needs network + model)
+#   make bench-real  opt-in: real local LLM benchmark of the prompt variants
+#                    (needs ollama + model; quality gate on the active one)
 #   make build       build dist/yt-pipeline (zipapp)
 
 PYTHON ?= python3
 
-.PHONY: test test-unit test-e2e test-real test-live build
+.PHONY: test test-unit test-e2e test-real test-live bench-real build
 
 test: test-unit test-e2e
 
@@ -27,6 +29,9 @@ test-real:
 
 test-live:
 	YT_TEST_REAL=1 YT_E2E_LIVE=1 $(PYTHON) -m unittest discover -s tests/real -t .
+
+bench-real:
+	$(PYTHON) -m ytpipeline benchmark --min-overall 3.5
 
 build:
 	./build.sh

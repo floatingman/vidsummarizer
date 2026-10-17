@@ -33,9 +33,10 @@ class TestParserDefaults(unittest.TestCase):
         self.assertIsNone(a.threads)
         self.assertEqual(a.llm_model, "qwen3.6")
         self.assertEqual(a.host, "http://127.0.0.1:11434")
-        self.assertEqual(a.max_words, 500)
+        self.assertIsNone(a.max_words)  # resolved later: 500 or the style's
         self.assertEqual(a.chunk_words, 1500)
         self.assertIsNone(a.summary_lang)
+        self.assertIsNone(a.style)
 
     def test_transcribe_defaults_and_out_flag(self):
         a = parse(["transcribe", "dQw4w9WgXcQ"])
@@ -52,8 +53,20 @@ class TestParserDefaults(unittest.TestCase):
         a = parse(["summarize", "dQw4w9WgXcQ"])
         self.assertEqual(a.model, "qwen3.6")
         self.assertFalse(a.all)
-        self.assertEqual(a.max_words, 500)
+        self.assertIsNone(a.max_words)  # resolved later: 500 or the style's
         self.assertFalse(a.force)
+        self.assertIsNone(a.style)
+
+    def test_style_option(self):
+        a = parse(["summarize", "x", "--style", "short"])
+        self.assertEqual(a.style, "short")
+        self.assertIsNone(a.max_words)
+        a = parse(["summarize", "x", "--style", "study-guide",
+                   "--max-words", "300"])
+        self.assertEqual(a.style, "study-guide")
+        self.assertEqual(a.max_words, 300)  # explicit cap beats the style's
+        a = parse(["run", "x", "--style", "actionable"])
+        self.assertEqual(a.style, "actionable")
 
     def test_ollama_model_env(self):
         with mock.patch.dict(os.environ, {"OLLAMA_MODEL": "llama3"}):

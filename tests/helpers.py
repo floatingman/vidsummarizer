@@ -28,7 +28,8 @@ FAKE_BIN = TESTS / "fakes"
 # Env vars that change the tool's behavior; cleared for every CLI run so
 # tests are deterministic regardless of the developer's environment.
 LEAKY_ENV_VARS = ("YT_WORKDIR", "YT_TRANSCRIPTS_DIR", "YT_JOBS",
-                  "OLLAMA_HOST", "OLLAMA_MODEL")
+                  "OLLAMA_HOST", "OLLAMA_MODEL", "OLLAMA_JUDGE_MODEL",
+                  "YT_PROMPTS_DIR")
 
 
 # --------------------------------------------------------------------------- #
@@ -114,7 +115,11 @@ class _FakeOllamaHandler(BaseHTTPRequestHandler):
         with self.fake.lock:
             self.fake.chat_requests.append(body)
             fail = self.fake.fail_queue.pop(0) if self.fake.fail_queue else None
-            content = self.fake.next_content()
+            content = None
+            if self.fake.responder is not None:
+                content = self.fake.responder(body)  # may return None
+            if content is None:
+                content = self.fake.next_content()
         if fail is not None:
             self._json(fail.get("body", {"error": "boom"}),
                        status=fail.get("status", 500))
@@ -141,6 +146,10 @@ class FakeOllamaServer:
       .fail_queue       queue of {"status": int, "body": dict} failures to
                         return for /api/chat before succeeding again
       .chat_requests    every /api/chat request body, in order
+      .responder        optional callable(body_dict) -> content str or None;
+                        takes precedence over .contents when it returns a
+                        string (used to answer summary vs judge calls
+                        differently)
     """
 
     def __init__(self, models=("qwen3.6",)):
@@ -149,6 +158,7 @@ class FakeOllamaServer:
         self.chat_requests = []
         self.contents = []
         self.fail_queue = []
+        self.responder = None
         self.default_content = ("## Overview\n\nCanned overview: the fixture "
                                 "video shows the pipeline working end to end.")
         self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), _FakeOllamaHandler)
@@ -170,6 +180,7 @@ class FakeOllamaServer:
             self.chat_requests.clear()
             self.contents.clear()
             self.fail_queue.clear()
+            self.responder = None
 
     def stop(self):
         self._httpd.shutdown()
@@ -232,12 +243,65 @@ def tool_log(workdir):
     return out
 
 
-def run_cli(args, env, timeout=180):
+def run_cli(args, env, timeout=180, input=None):
     """Run `python3 -m ytpipeline ARGS` from the repo root."""
     return subprocess.run(
         [sys.executable, "-m", "ytpipeline", *args],
         cwd=str(REPO), env=env, capture_output=True, text=True,
-        errors="replace", timeout=timeout)
+        errors="replace", timeout=timeout, input=input)
+
+
+class FakeZipPath:
+    """A Traversable standing in for importlib.resources' zipfile.Path
+    as py3.9 exposes it inside the zipapp. Two properties matter for
+    regression tests (the packed prompts/ and benchset/ must work through
+    them):
+
+    - str() is NOT a real filesystem path (the zip archive's internal
+      name), so code must not Path(str(p)) or open(str(p)) it;
+    - read_text() of a missing entry raises KeyError (newer Pythons
+      raise FileNotFoundError instead).
+
+    Construct with a {"rel/path/name": text} mapping; iterdir() walks it.
+    """
+
+    def __init__(self, entries, at=""):
+        self._entries = entries
+        self._at = at
+
+    def __truediv__(self, child):
+        at = f"{self._at}/{child}" if self._at else str(child)
+        return FakeZipPath(self._entries, at)
+
+    @property
+    def name(self):
+        return self._at.rsplit("/", 1)[-1]
+
+    def is_file(self):
+        return self._at in self._entries
+
+    def is_dir(self):
+        return not self._at or any(k.startswith(self._at + "/")
+                                   for k in self._entries)
+
+    def read_text(self, encoding="utf-8"):
+        if not self.is_file():
+            raise KeyError(self._at)  # the py3.9 zipfile.Path behavior
+        return self._entries[self._at]
+
+    def iterdir(self):
+        if not self._at:
+            names = sorted({k.split("/", 1)[0] for k in self._entries})
+        else:
+            pfx = self._at + "/"
+            names = sorted({k[len(pfx):].split("/", 1)[0]
+                            for k in self._entries if k.startswith(pfx)})
+        return [FakeZipPath(self._entries,
+                            f"{self._at}/{n}" if self._at else n)
+                for n in names]
+
+    def __str__(self):
+        return f"<packed>/{self._at}"  # deliberately not a real path
 
 
 class TempWorkdirMixin(unittest.TestCase):
