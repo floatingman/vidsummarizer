@@ -32,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0        # full history: the changelog lists commits since the previous release
 
       - uses: actions/setup-python@v5
         with:
@@ -65,12 +67,11 @@ jobs:
           PREV=$(gh release list -R "$GITHUB_REPOSITORY" --limit 1 \
                    --json tagName --jq '.[0].tagName' 2> /dev/null || true)
           if [ -n "${PREV:-}" ]; then
-            echo "== appending generated changelog since $PREV"
-            gh api -X POST "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-              -f tag_name="$TAG" -f previous_tag_name="$PREV" \
-              --jq .body > "$WORK/changes.md"
+            echo "== appending commit log since $PREV"
             printf '\n\n## Changes since %s\n\n' "$PREV" >> "$WORK/notes.md"
-            cat "$WORK/changes.md" >> "$WORK/notes.md"
+            git log --no-merges --pretty='* %s (%h)' "$PREV..HEAD" >> "$WORK/notes.md"
+            printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+              "$GITHUB_REPOSITORY" "$PREV" "$TAG" >> "$WORK/notes.md"
           fi
 
           gh release create "$TAG" dist/yt-pipeline \
