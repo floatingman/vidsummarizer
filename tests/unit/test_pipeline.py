@@ -64,7 +64,8 @@ class TestCmdFetch(CleanEnvMixin):
         self.mp3.write_bytes(b"x" * 1024)
 
     def test_single_video(self):
-        args = parse(["fetch", VID, "--workdir", str(self.workdir)])
+        args = parse(["fetch", VID, "-j", "1",
+                      "--workdir", str(self.workdir)])
         with mock.patch("ytpipeline.pipeline.fetch_video_audio",
                         return_value=({"title": "T"}, self.mp3)) as fva:
             rc = pipeline.cmd_fetch(args)
