@@ -349,6 +349,7 @@ yt-pipeline/
   tests/                 unit + E2E test suite: `make test` (see Testing)
   build.sh               builds dist/yt-pipeline (zipapp)
   Makefile               test / build entry points
+  .github/               CI workflows: test gate + automated releases (see below)
   README.md
 ```
 
@@ -413,6 +414,28 @@ When a bug is found:
    `tests/fakes/yt-dlp` / `whisper-cli` (e.g. `YT_FAKE_YTDLP_FAIL_IDS`).
 3. **Fix the code, then `make test`.** The suite must be green before and
    after; the test doubles as the documentation of the bug.
+
+### Automated releases (CI)
+
+GitHub Actions (`.github/workflows/`) gates every change and publishes
+releases automatically:
+
+- **Every pull request** (and every push to `master`) runs the gate:
+  `make build` plus `make test` on Python 3.9 and 3.14, a version check on
+  the built executable, and a `doctor` sanity check on the bare runner
+  (it must detect the missing tools and exit 1). The suite is offline and
+  deterministic, so a red gate always means a real regression.
+- **Every push to `master`** then publishes: if the `VERSION` in
+  `ytpipeline/__init__.py` has no `v<VERSION>` release yet, the workflow
+  tags that commit, builds `dist/yt-pipeline` and attaches it
+  (uncompressed, as documented above) to a GitHub Release with notes from
+  `.github/release-notes-template.md` plus a generated change list since
+  the previous release. A push without a version bump runs the tests and
+  does nothing else.
+
+So the normal release procedure is: bump `VERSION`, update docs if needed,
+`make test`, commit, push. If the gate is red, nothing is released. The
+`release` workflow can also be dispatched manually to re-run the check.
 
 ## Troubleshooting
 

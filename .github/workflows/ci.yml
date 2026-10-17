@@ -1,0 +1,50 @@
+# Quality gate for yt-pipeline: run on every pull request, and (via
+# workflow_call) before every automated release.
+#
+# Everything here is offline and deterministic: `make test` stubs all
+# external tools (yt-dlp, whisper-cli, ffmpeg, ollama) with tests/fakes/,
+# so a red gate always means a real regression, never a flaky machine.
+name: tests
+
+on:
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.14"]   # documented minimum + current
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Build the executable (build.sh smoke-tests --version)
+        run: make build
+
+      - name: Unit + E2E tests (offline; also exercises the built executable)
+        run: make test
+
+      - name: Built executable reports its version
+        run: |
+          VERSION=$(python3 -c "from ytpipeline import VERSION; print(VERSION)")
+          test "$(./dist/yt-pipeline --version)" = "yt-pipeline $VERSION"
+
+      - name: doctor detects a bare machine (nothing installed)
+        run: |
+          set +e
+          ./dist/yt-pipeline doctor > doctor.txt 2>&1
+          rc=$?
+          set -e
+          cat doctor.txt
+          # this runner has no yt-dlp / whisper-cli / ollama, so doctor
+          # must fail and say exactly what is missing
+          test "$rc" -eq 1
+          grep -q '\[MISS\]' doctor.txt
+          grep -q 'Result: missing' doctor.txt
