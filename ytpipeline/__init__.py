@@ -9,4 +9,4 @@ Everything runs locally; no cloud APIs, no API keys. Only the Python
 standard library is used, so the whole tool ships as a single zipapp file.
 """
 
-VERSION = "2.0.0"
+VERSION = "2.1.0"

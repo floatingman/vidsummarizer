@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 from . import VERSION
@@ -42,20 +43,40 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
 
 # --------------------------------------------------------------------------- #
-# Logging
+# Logging (thread-safe; batch mode tags each line with the video id)
 # --------------------------------------------------------------------------- #
 
+_print_lock = threading.Lock()
+_log_tag = threading.local()
+
+
+def set_log_tag(tag):
+    """Tag every log/warn/error line from the calling thread with `tag`
+    (batch mode uses the video id so concurrent videos stay readable)."""
+    _log_tag.value = tag
+
+
+def _tagged(msg):
+    tag = getattr(_log_tag, "value", None)
+    if tag and not msg.startswith("["):
+        return f"[{tag}] {msg}"
+    return msg
+
+
 def die(msg, code=1):
-    print(f"{PROG}: error: {msg}", file=sys.stderr)
+    with _print_lock:
+        print(f"{PROG}: error: {_tagged(msg)}", file=sys.stderr)
     sys.exit(code)
 
 
 def warn(msg):
-    print(f"{PROG}: warning: {msg}", file=sys.stderr)
+    with _print_lock:
+        print(f"{PROG}: warning: {_tagged(msg)}", file=sys.stderr)
 
 
 def log(msg):
-    print(msg, file=sys.stderr)
+    with _print_lock:
+        print(_tagged(msg), file=sys.stderr)
 
 
 # --------------------------------------------------------------------------- #
@@ -98,6 +119,59 @@ def parse_video_id(arg):
 
 def watch_url(video_id):
     return f"https://www.youtube.com/watch?v={video_id}"
+
+
+# --------------------------------------------------------------------------- #
+# Video lists (batch input)
+# --------------------------------------------------------------------------- #
+
+def split_video_tokens(tokens):
+    """Flatten comma-separated URL/id tokens into a list of non-empty ones."""
+    out = []
+    for tok in tokens or []:
+        for part in str(tok).split(","):
+            part = part.strip()
+            if part:
+                out.append(part)
+    return out
+
+
+def read_batch_file(path):
+    """Read a batch file: one video URL/id per line (commas also separate),
+    blank lines and # comments ignored. '-' reads from stdin."""
+    if path == "-":
+        text = sys.stdin.read()
+    else:
+        try:
+            text = Path(path).expanduser().read_text(encoding="utf-8")
+        except OSError as e:
+            die(f"cannot read batch file {path}: {e}")
+    lines = (ln.split("#", 1)[0] for ln in text.splitlines())  # strip comments
+    return split_video_tokens(lines)
+
+
+def collect_videos(positional, batch_files):
+    """Merge positional tokens and --batch files into a validated list of
+    video ids (dies early on junk so a typo costs no downloads; duplicate
+    entries are dropped with a warning)."""
+    tokens = split_video_tokens(positional)
+    for bf in batch_files or []:
+        tokens += read_batch_file(bf)
+    if not tokens:
+        die("no videos given: pass URL(s)/id(s) (comma-separated or as several "
+            "arguments) and/or --batch FILE with one video per line")
+    ids = [parse_video_id(t) for t in tokens]
+    seen, out, dupes = set(), [], []
+    for vid in ids:
+        if vid in seen:
+            if vid not in dupes:
+                dupes.append(vid)
+            continue
+        seen.add(vid)
+        out.append(vid)
+    if dupes:
+        warn(f"ignoring duplicate video(s): {', '.join(dupes)}")
+    return out
 
 
 # --------------------------------------------------------------------------- #

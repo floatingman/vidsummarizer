@@ -1,5 +1,8 @@
-"""Pipeline orchestration: the 'run' (end-to-end), 'fetch' (audio only) and
-'doctor' (environment check) commands."""
+"""Pipeline orchestration: the 'run' (end-to-end), 'fetch' (audio only),
+'transcribe' (audio -> transcript) and 'doctor' (environment check)
+commands. All video-taking commands accept a list (comma-separated
+URLs/ids, several arguments, and/or a --batch file) and process it with a
+small worker pool (see batch.py)."""
 
 import json
 import os
@@ -7,12 +10,62 @@ import shutil
 import subprocess
 import sys
 import urllib.request
+from pathlib import Path
 from types import SimpleNamespace
 
 from . import VERSION
-from .common import EXTERNAL_TOOLS, PROG, log, resolve_workdir
-from .summarize import normalize_host
-from .transcribe import DEFAULT_MODEL_NAME, fetch_video_audio, transcribe_video
+from .batch import run_batch
+from .common import (EXTERNAL_TOOLS, PROG, collect_videos, die, log,
+                     require_tools, resolve_workdir)
+from .summarize import Ollama, normalize_host, summarize_targets
+from .transcribe import (DEFAULT_MODEL_NAME, ensure_model, fetch_video_audio,
+                         transcribe_video)
+
+TRANSCRIBE_TOOLS = ["yt-dlp", "ffmpeg", "whisper-cli"]
+DEFAULT_WHISPER_THREADS = 8
+
+
+# --------------------------------------------------------------------------- #
+# Batch helpers
+# --------------------------------------------------------------------------- #
+
+def resolve_threads(args, jobs):
+    """Whisper CPU threads per job. Unless -t was given explicitly, the
+    default of 8 is split across the jobs that can actually run at once
+    (at least 2 each) so a batch run keeps total CPU use near that of a
+    single-video run."""
+    if getattr(args, "threads", None) is not None:
+        return args.threads
+    return DEFAULT_WHISPER_THREADS if jobs <= 1 \
+        else max(2, DEFAULT_WHISPER_THREADS // jobs)
+
+
+def _in_flight(jobs, videos):
+    """Jobs that can actually run concurrently for this video list."""
+    return min(jobs, len(videos))
+
+
+def _batch_intro(what, videos, jobs, threads=None):
+    msg = f"* batch: {what} {len(videos)} video(s), {jobs} at a time"
+    if threads:
+        msg += f", {threads} whisper thread(s) each"
+    return msg
+
+
+def _transcribe_ns(args, video_id, threads, out):
+    return SimpleNamespace(
+        video=video_id,
+        out=out,
+        audio_dir=args.audio_dir,
+        keep_audio=args.keep_audio,
+        model=args.model,
+        model_url=args.model_url,
+        lang=args.lang,
+        threads=threads,
+        timestamps=args.timestamps,
+        redownload=args.redownload,
+        ytdlp=args.ytdlp,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -21,14 +74,57 @@ from .transcribe import DEFAULT_MODEL_NAME, fetch_video_audio, transcribe_video
 
 def cmd_fetch(args):
     workdir = resolve_workdir(args.workdir)
-    t = SimpleNamespace(
-        video=args.video, audio_dir=args.audio_dir,
-        redownload=args.redownload, ytdlp=args.ytdlp,
-    )
-    meta, audio = fetch_video_audio(t, workdir)
-    log(f"* audio ready: {audio} "
-        f"({audio.stat().st_size // (1024 * 1024)} MiB)")
-    return 0
+    videos = collect_videos(args.videos, args.batch)
+    jobs = args.jobs
+
+    def one(video_id):
+        t = SimpleNamespace(
+            video=video_id, audio_dir=args.audio_dir,
+            redownload=args.redownload, ytdlp=args.ytdlp,
+        )
+        meta, audio = fetch_video_audio(t, workdir)
+        log(f"* audio ready: {audio} "
+            f"({audio.stat().st_size // (1024 * 1024)} MiB)")
+        return str(audio)
+
+    if len(videos) == 1 and jobs == 1:
+        one(videos[0])
+        return 0
+    require_tools(["yt-dlp", "ffmpeg"])
+    _, failures = run_batch(videos, one, jobs,
+                            intro=_batch_intro("fetching", videos, jobs))
+    return 1 if failures else 0
+
+
+# --------------------------------------------------------------------------- #
+# transcribe: YouTube URL -> transcript only
+# --------------------------------------------------------------------------- #
+
+def cmd_transcribe(args):
+    workdir = resolve_workdir(args.workdir)
+    videos = collect_videos(args.videos, args.batch)
+    jobs = args.jobs
+    threads = resolve_threads(args, _in_flight(jobs, videos))
+    if args.out and len(videos) > 1:
+        die("-o/--out writes one transcript file; drop it for batch runs "
+            "(each video gets transcripts/<video_id>.txt)")
+
+    def one(video_id):
+        return str(transcribe_video(_transcribe_ns(args, video_id, threads,
+                                                   args.out), workdir))
+
+    if len(videos) == 1 and jobs == 1:
+        one(videos[0])
+        return 0
+    require_tools(TRANSCRIBE_TOOLS)
+    ensure_model(Path(args.model) if args.model
+                 else workdir / "models" / DEFAULT_MODEL_NAME, args.model_url)
+    _, failures = run_batch(
+        videos, one, jobs,
+        intro=_batch_intro("transcribing", videos, jobs,
+                           threads if threads != DEFAULT_WHISPER_THREADS else None)
+        if len(videos) > 1 else None)
+    return 1 if failures else 0
 
 
 # --------------------------------------------------------------------------- #
@@ -37,38 +133,65 @@ def cmd_fetch(args):
 
 def cmd_run(args):
     workdir = resolve_workdir(args.workdir)
-    t = SimpleNamespace(
-        video=args.video,
-        out=args.transcript_out,
-        audio_dir=args.audio_dir,
-        keep_audio=args.keep_audio,
-        model=args.model,
-        model_url=args.model_url,
-        lang=args.lang,
-        threads=args.threads,
-        timestamps=args.timestamps,
-        redownload=args.redownload,
-        ytdlp=args.ytdlp,
-    )
-    transcript = transcribe_video(t, workdir)
+    videos = collect_videos(args.videos, args.batch)
+    jobs = args.jobs
+    if args.transcript_out and len(videos) > 1:
+        die("-o/--transcript-out writes one transcript file; drop it for "
+            "batch runs (each video gets transcripts/<video_id>.txt)")
+    if args.stdout and len(videos) > 1 and jobs > 1:
+        log("* --stdout with several videos: using --jobs 1 so the notes "
+            "print in order")
+        jobs = 1
+    threads = resolve_threads(args, _in_flight(jobs, videos))
 
-    opts = SimpleNamespace(
-        out=args.out or str(workdir / "summaries"),
-        model=args.llm_model,
-        host=args.host,
-        timeout=args.timeout,
-        no_autostart=args.no_autostart,
-        think=args.think,
-        max_words=args.max_words,
-        lang=args.summary_lang,
-        chunk_words=args.chunk_words,
-        notes_words=args.notes_words,
-        max_num_ctx=args.max_num_ctx,
-        force=args.force,
-        stdout=args.stdout,
-    )
-    from .summarize import summarize_targets
-    return summarize_targets([str(transcript)], opts)
+    def summarize_opts():
+        return SimpleNamespace(
+            out=args.out or str(workdir / "summaries"),
+            model=args.llm_model,
+            host=args.host,
+            timeout=args.timeout,
+            no_autostart=args.no_autostart,
+            think=args.think,
+            max_words=args.max_words,
+            lang=args.summary_lang,
+            chunk_words=args.chunk_words,
+            notes_words=args.notes_words,
+            max_num_ctx=args.max_num_ctx,
+            force=args.force,
+            stdout=args.stdout,
+        )
+
+    def one(video_id, ollama=None):
+        t = _transcribe_ns(args, video_id, threads, args.transcript_out)
+        transcript = transcribe_video(t, workdir)
+        return summarize_targets([str(transcript)], summarize_opts(),
+                                  ollama=ollama)
+
+    if len(videos) == 1 and jobs == 1:  # exact single-video behavior of 2.0.x
+        return one(videos[0])
+
+    # Batch pre-flight, once, before any downloads start: external tools,
+    # the whisper model (so only one worker can ever download it), and the
+    # Ollama server + model (shared client; no autostart race between jobs).
+    require_tools(TRANSCRIBE_TOOLS)
+    ensure_model(Path(args.model) if args.model
+                 else workdir / "models" / DEFAULT_MODEL_NAME, args.model_url)
+    opts = summarize_opts()
+    ollama = Ollama(opts.host, opts.model, opts.timeout,
+                    no_autostart=opts.no_autostart)
+    ollama.check_model()
+
+    def work(video_id):
+        return one(video_id, ollama=ollama)
+
+    results, failures = run_batch(
+        videos, work, jobs,
+        intro=_batch_intro("processing", videos, jobs,
+                           threads if threads != DEFAULT_WHISPER_THREADS else None)
+        if len(videos) > 1 else None)
+    # summarize_targets reports per-video failures as a non-zero return value
+    soft_failures = [v for v, rc in results.items() if rc]
+    return 1 if failures or soft_failures else 0
 
 
 # --------------------------------------------------------------------------- #

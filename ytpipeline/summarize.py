@@ -582,16 +582,19 @@ def output_path(out_dir, meta, stem):
 # Core entry point (used by the 'summarize' and 'run' commands)
 # --------------------------------------------------------------------------- #
 
-def summarize_targets(paths, opts):
+def summarize_targets(paths, opts, ollama=None):
     """Summarize the given transcript files and write/print the notes.
 
     opts must have fields: out, model, host, timeout, no_autostart, think,
     max_words, chunk_words, notes_words, max_num_ctx, force, stdout, lang.
+    A pre-built, running Ollama client (batch mode) can be passed in; by
+    default one is created (and the model checked) here.
     Returns the process exit code (0 ok, 1 if any file failed).
     """
-    ollama = Ollama(opts.host, opts.model, opts.timeout,
-                    no_autostart=opts.no_autostart)
-    ollama.check_model()
+    if ollama is None:
+        ollama = Ollama(opts.host, opts.model, opts.timeout,
+                        no_autostart=opts.no_autostart)
+        ollama.check_model()
 
     failures = 0
     for path in paths:

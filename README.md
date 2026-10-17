@@ -14,12 +14,12 @@ library only, so it ships as one executable file that can be copied to other
 computers.
 
 ```
-yt-pipeline <url>              full pipeline in one command (same as 'run')
-yt-pipeline run <url>          ...explicit form, with all stage options
-yt-pipeline fetch <url>        only download the mp3
-yt-pipeline transcribe <url>   only the transcript (the old yt-transcribe)
+yt-pipeline <url(s)>            full pipeline in one command (same as 'run')
+yt-pipeline run <url(s)>        ...explicit form, with all stage options
+yt-pipeline fetch <url(s)>      only download the mp3
+yt-pipeline transcribe <url(s)> only the transcript (the old yt-transcribe)
 yt-pipeline summarize <id|url|file> | --all    only the note (the old yt-summarize)
-yt-pipeline doctor             check this machine for everything the pipeline needs
+yt-pipeline doctor               check this machine for everything the pipeline needs
 ```
 
 All current behavior of the two original tools is preserved: LLM-readable
@@ -27,10 +27,16 @@ plain-text transcripts, and markdown summaries of at most 500 words
 (actionable content preferred, otherwise an overview) that import into an
 Obsidian vault as regular notes. See "Output formats" below.
 
+Every video-taking command (`<url(s)>` above) accepts a whole list of
+videos in one run: several arguments, comma-separated values, a `--batch`
+FILE with one video per line, or any mix; batches are processed with a
+small worker pool so transcription of later videos overlaps with the
+summarization of earlier ones ("Batch processing" below).
+
 ## The one-file executable
 
 `./build.sh` produces `dist/yt-pipeline`, a single self-contained file
-(~24 KB) built with the Python standard library's `zipapp` module: the whole
+(~28 KB) built with the Python standard library's `zipapp` module: the whole
 `ytpipeline` package is packed into one executable archive with a
 `#!/usr/bin/env python3` shebang. It does not need this checkout, a git
 clone, or any pip packages at runtime; it only needs a Python 3.9+
@@ -89,7 +95,7 @@ Example `doctor` output on a machine missing whisper.cpp and Ollama:
 
 ```
 $ ./yt-pipeline doctor
-yt-pipeline 2.0.0 doctor: checking this machine for the local pipeline
+yt-pipeline 2.1.0 doctor: checking this machine for the local pipeline
 
 Core:
   [ OK ] Python 3.12.3 (/usr/bin/python3)
@@ -125,6 +131,8 @@ missing, so it can gate automated setups.
 ./yt-pipeline https://www.youtube.com/watch?v=iCvmsMzlF7o    # one command, end to end
 ./yt-pipeline run iCvmsMzlF7o --timestamps                   # explicit form
 ./yt-pipeline run jNQXAC9IVRw --no-keep-audio --stdout       # print the note, delete the mp3
+./yt-pipeline url1,url2,iCvmsMzlF7o                          # a whole list in one run
+./yt-pipeline run --batch watchlist.txt -j 3                 # ...or from a file, 3 at a time
 ```
 
 Downloads the audio, writes `transcripts/<video_id>.txt`, then the summary
@@ -132,11 +140,73 @@ note into `summaries/<Title>.md`, and prints what it did to stderr. On the
 reference machine (Ryzen 7 5850U, CPU-only) a 21-minute video takes about
 7 minutes end to end (2 min whisper.cpp + 5 min qwen3.6 summarization).
 
+### Batch processing (many videos at once)
+
+`run`, `fetch` and `transcribe` take any number of videos. Three input
+forms, freely combinable:
+
+```bash
+./yt-pipeline run https://youtu.be/a,https://youtu.be/b,jNQXAC9IVRw  # comma-separated
+./yt-pipeline run url1 url2 url3                                     # several arguments
+./yt-pipeline run --batch watchlist.txt                              # one video per line
+```
+
+A batch file has one video URL or id per line (anything after a `#` is a
+comment, blank lines are ignored, commas also separate); `--batch -` reads
+the list from stdin, and `--batch` may be given more than once:
+
+```
+# watchlist.txt
+https://www.youtube.com/watch?v=iCvmsMzlF7o    # the merge explainer
+jNQXAC9IVRw
+```
+
+Videos are validated and de-duplicated before anything is downloaded (a
+typo in the list costs nothing), and every line of progress output is
+prefixed with the video id so concurrent videos stay readable:
+
+```
+* batch: processing 2 video(s), 2 at a time, 4 whisper thread(s) each
+[jNQXAC9IVRw] * Me at the zoo [00:19] -> downloading audio
+[dQw4w9WgXcQ] * Rick Astley - Never Gonna Give You Up ... [03:33] -> downloading audio
+[jNQXAC9IVRw] * transcribing jNQXAC9IVRw.mp3 with ggml-small.bin (lang=auto)
+[jNQXAC9IVRw] 35 words -> single pass (qwen3.6)
+[dQw4w9WgXcQ] * transcribing dQw4w9WgXcQ.mp3 with ggml-small.bin (lang=auto)
+[jNQXAC9IVRw] wrote .../summaries/Me at the zoo.md (44 words, 30s)
+[dQw4w9WgXcQ] * wrote .../transcripts/dQw4w9WgXcQ.txt (494 words, 3 paragraphs)
+...
+* batch finished in 01:45: 2/2 video(s) ok
+```
+
+A video that fails (unavailable, geo-blocked, empty transcript, ...) does
+not stop the batch: it is reported, the rest carry on, and the exit code is
+1 if anything failed. `--stdout` with several videos forces `--jobs 1` so
+the notes print in order.
+
+**Parallelism.** `-j/--jobs N` (default 2, env `YT_JOBS`) sets how many
+videos are in flight at once. Summarization (local LLM) is slower than
+transcription (whisper.cpp), so even 2 jobs already overlap the stages:
+while an earlier video is still being summarized, the next one is already
+downloading/transcribing, as in the log above. Higher values overlap more,
+bounded by the machine:
+
+- each job runs one `whisper-cli` (CPU) and one Ollama request at a time;
+  the Ollama server queues concurrent generation requests itself, so the
+  LLM stays a single hot process no matter how many jobs you set;
+- unless `-t` is given explicitly, whisper's default 8 CPU threads are
+  split across the jobs that can actually run at once
+  (`max(2, 8/min(--jobs, videos))` each), so a batch's total CPU use stays
+  near that of a single-video run; pass `-t` to override;
+- `--jobs 1` reproduces the exact one-at-a-time behavior (useful on small
+  machines or when comparing runs).
+
 ### Individual steps
 
 ```bash
 ./yt-pipeline fetch jNQXAC9IVRw                              # mp3 only
+./yt-pipeline fetch --batch list.txt -j 4                    # ...several at once
 ./yt-pipeline transcribe jNQXAC9IVRw                         # mp3 -> transcript
+./yt-pipeline transcribe a,b,c --timestamps                  # several, with [MM:SS] markers
 ./yt-pipeline transcribe DP-VTlJkzOY --lang de               # force audio language
 ./yt-pipeline transcribe -m models/ggml-base.bin <id>        # different (auto-downloaded) model
 ./yt-pipeline transcribe --ytdlp '--cookies-from-browser firefox' <id>
@@ -154,15 +224,22 @@ run/summarize prints the note to stdout instead.
 
 ### Options
 
+Batch input and parallelism (`run`, `fetch`, `transcribe`):
+
+| Option | Default | Description |
+|---|---|---|
+| `-b, --batch FILE` | none | file with one video URL/id per line (`#` comments and blank lines ignored); `-` reads stdin; repeatable, combinable with positional URLs/ids |
+| `-j, --jobs N` | `2` (env `YT_JOBS`) | videos processed concurrently; `1` = strictly sequential |
+
 Transcription stage (`run`, `transcribe`):
 
 | Option | Default | Description |
 |---|---|---|
-| `-o, --out FILE` / `-o, --transcript-out FILE` | `<workdir>/transcripts/<id>.txt` | output transcript path |
+| `-o, --out FILE` / `-o, --transcript-out FILE` | `<workdir>/transcripts/<id>.txt` | output transcript path (single video only) |
 | `-m, --model PATH` | `<workdir>/models/ggml-small.bin` | whisper GGML model; auto-downloaded if missing |
 | `--model-url URL` | HuggingFace `ggerganov/whisper.cpp` | override download URL for the model |
 | `-l, --lang LANG` | `auto` | spoken language (`en`, `de`, ...); `auto` lets whisper detect |
-| `-t, --threads N` | `8` | whisper CPU threads |
+| `-t, --threads N` | `8` | whisper CPU threads per job; split across jobs actually running (`max(2, 8/min(--jobs, videos))` each) when batching without an explicit `-t` |
 | `--timestamps` | off | prefix each paragraph with a `[MM:SS]` start marker |
 | `--audio-dir DIR` | `<workdir>/audio` | where mp3 files are stored |
 | `--keep-audio` / `--no-keep-audio` | keep | keep or delete the mp3 afterwards |
@@ -245,7 +322,7 @@ Only what the merge itself forces; formats and pipeline behavior are
 unchanged:
 
 - The `tool:` transcript line and `summarizer:` frontmatter now say
-  `yt-pipeline 2.0.0` instead of the old tool names.
+  `yt-pipeline 2.1.0` instead of the old tool names.
 - One work directory (see above) instead of two sibling checkouts;
   `yt-summarize`'s machine-specific default transcript path is gone
   (`--transcripts` and `$YT_TRANSCRIPTS_DIR` still work).
@@ -263,10 +340,12 @@ unchanged:
 yt-pipeline/
   ytpipeline/            the tool (Python stdlib only)
     cli.py               argument parsing and subcommand dispatch
-    common.py            shared helpers, tool detection, workdir resolution
+    common.py            shared helpers, tool detection, workdir resolution,
+                         video-list parsing, thread-safe tagged logging
     transcribe.py        yt-dlp + whisper.cpp stage (from yt-transcribe)
     summarize.py         Ollama stage (from yt-summarize)
-    pipeline.py          run/fetch/doctor commands
+    batch.py             worker pool: list of videos, overlapped, failures isolated
+    pipeline.py          run/fetch/transcribe/doctor commands
   build.sh               builds dist/yt-pipeline (zipapp)
   README.md
 ```
@@ -289,3 +368,9 @@ Run from the checkout without building: `python3 -m ytpipeline <command> ...`
   the ~466 MiB whisper model once into `<workdir>/models/`.
 - **Disliked summary**: re-run with `--force`; different models give
   different flavors (`--model`).
+- **One bad video in a batch**: expected to happen; the run continues with
+  the other videos and lists the failed ids at the end (exit code 1).
+- **Batch too slow / machine overloaded**: lower `--jobs` (default 2) or
+  pin whisper threads with `-t`; see "Batch processing" for the CPU budget
+  model. `OLLAMA_NUM_PARALLEL` on the Ollama server side controls whether
+  summaries themselves generate in parallel.

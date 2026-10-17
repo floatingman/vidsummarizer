@@ -1,25 +1,31 @@
 """Command-line interface: subcommand parsing and dispatch.
 
-    yt-pipeline <url>                full pipeline (same as 'run')
-    yt-pipeline run <url>            mp3 -> transcript -> summary
-    yt-pipeline fetch <url>          mp3 only
-    yt-pipeline transcribe <url>     transcript only (the old yt-transcribe)
+    yt-pipeline <url>[,<url>...]       full pipeline (same as 'run')
+    yt-pipeline run <urls/ids>...      mp3 -> transcript -> summary
+    yt-pipeline fetch <urls/ids>...    mp3 only
+    yt-pipeline transcribe <urls/ids>  transcript only (the old yt-transcribe)
     yt-pipeline summarize <id|url|file|'--all'>   (the old yt-summarize)
-    yt-pipeline doctor               check this machine for missing tools
-"""
+    yt-pipeline doctor                 check this machine for missing tools
+
+Every video-taking command accepts several videos at once: as several
+arguments, comma-separated, from a --batch FILE (one per line), or any mix.
+With more than one video the work is overlapped by a small worker pool
+(-j/--jobs, default 2)."""
 
 import argparse
 import os
 import sys
 
 from . import VERSION
-from .common import PROG, resolve_workdir
+from .common import PROG, die, resolve_workdir
 
 COMMANDS = ("run", "fetch", "transcribe", "summarize", "doctor")
 
 EPILOG = """examples:
   yt-pipeline https://youtu.be/iCvmsMzlF7o           full pipeline in one command
   yt-pipeline run iCvmsMzlF7o --timestamps          same, explicit 'run'
+  yt-pipeline url1,url2,jNQXAC9IVRw                 several videos, comma-separated
+  yt-pipeline run --batch videos.txt -j 3           ...or one per line from a file
   yt-pipeline fetch jNQXAC9IVRw                      only download the mp3
   yt-pipeline transcribe jNQXAC9IVRw --lang de       only the transcript
   yt-pipeline summarize iCvmsMzlF7o                  only the summary
@@ -37,12 +43,50 @@ def add_workdir(p):
                         "executable)")
 
 
+def _jobs_type(s):
+    try:
+        v = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer")
+    if v < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return v
+
+
+def env_jobs():
+    raw = (os.environ.get("YT_JOBS") or "").strip()
+    if not raw:
+        return 2
+    try:
+        return _jobs_type(raw)
+    except argparse.ArgumentTypeError:
+        die(f"invalid $YT_JOBS value {raw!r} (expected an integer >= 1)")
+
+
+def add_batch_opts(p):
+    """List input + parallelism (shared by 'run', 'fetch', 'transcribe')."""
+    p.add_argument("-b", "--batch", metavar="FILE", action="append",
+                   default=None,
+                   help="file with one video URL/id per line (blank lines and "
+                        "# comments ignored; '-' reads stdin; may be given "
+                        "more than once)")
+    p.add_argument("-j", "--jobs", type=_jobs_type, default=env_jobs(),
+                   metavar="N",
+                   help="how many videos to process at once, overlapping "
+                        "download/transcription of later videos with the "
+                        "summarization of earlier ones (default: 2, env "
+                        "YT_JOBS; 1 = strictly one after another)")
+
+
 def add_transcribe_opts(p, out_flag=("-o", "--out"), out_help=None):
     """Options of the transcription stage (shared by 'transcribe' and 'run')."""
-    p.add_argument("video", help="YouTube video URL or 11-character video id")
+    p.add_argument("videos", nargs="*", metavar="video",
+                   help="YouTube video URL(s) or 11-character id(s); commas "
+                        "separate several, or use --batch FILE")
     p.add_argument(*out_flag, type=str, default=None, metavar="FILE",
                    help=out_help or "output transcript file "
-                        "(default: <workdir>/transcripts/<video_id>.txt)")
+                        "(default: <workdir>/transcripts/<video_id>.txt; one "
+                        "video only)")
     p.add_argument("--audio-dir", type=str, default=None,
                    help="directory for downloaded mp3 files "
                         "(default: <workdir>/audio)")
@@ -57,8 +101,11 @@ def add_transcribe_opts(p, out_flag=("-o", "--out"), out_help=None):
                    help="override URL used to auto-download a missing model")
     p.add_argument("-l", "--lang", default="auto",
                    help="spoken language, e.g. en, de (default: auto-detect)")
-    p.add_argument("-t", "--threads", type=int, default=8,
-                   help="whisper CPU threads (default: 8)")
+    p.add_argument("-t", "--threads", type=int, default=None,
+                   help="whisper CPU threads per job (default: 8; when several "
+                        "jobs can run at once and -t is not given, split "
+                        "across them, min 2 each, so a batch stays within one "
+                        "video's CPU budget)")
     p.add_argument("--timestamps", action="store_true",
                    help="prefix each transcript paragraph with a [MM:SS] marker")
     p.add_argument("--redownload", action="store_true",
@@ -66,10 +113,13 @@ def add_transcribe_opts(p, out_flag=("-o", "--out"), out_help=None):
     p.add_argument("--ytdlp", default="",
                    help="extra yt-dlp arguments, e.g. "
                         "--ytdlp '--cookies-from-browser firefox'")
+    add_batch_opts(p)
 
 
 def add_fetch_opts(p):
-    p.add_argument("video", help="YouTube video URL or 11-character video id")
+    p.add_argument("videos", nargs="*", metavar="video",
+                   help="YouTube video URL(s) or 11-character id(s); commas "
+                        "separate several, or use --batch FILE")
     p.add_argument("--audio-dir", type=str, default=None,
                    help="directory for downloaded mp3 files "
                         "(default: <workdir>/audio)")
@@ -78,6 +128,7 @@ def add_fetch_opts(p):
     p.add_argument("--ytdlp", default="",
                    help="extra yt-dlp arguments, e.g. "
                         "--ytdlp '--cookies-from-browser firefox'")
+    add_batch_opts(p)
 
 
 def add_summarize_opts(p, run_mode=False):
@@ -143,8 +194,13 @@ def build_parser():
         "run", help="full pipeline: URL -> mp3 -> transcript -> summary",
         description="End to end: download the audio, transcribe it with "
                     "whisper.cpp, summarize the transcript with the local "
-                    "LLM and write an Obsidian-ready note.",
-        epilog="Calling the executable with just a URL or video id "
+                    "LLM and write an Obsidian-ready note. Accepts several "
+                    "videos (comma-separated, several arguments and/or "
+                    "--batch FILE), processed with a small worker pool.",
+        epilog="examples:\n"
+               "  yt-pipeline run url1,url2,url3 -j 2\n"
+               "  yt-pipeline run --batch videos.txt --timestamps\n\n"
+               "Calling the executable with just a URL or video id "
                "(no subcommand) does the same thing.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     add_transcribe_opts(
@@ -160,7 +216,7 @@ def build_parser():
     p_fetch = sub.add_parser(
         "fetch", help="download the audio (mp3) only",
         description="Download the video's audio track as mp3; no "
-                    "transcription, no summary.")
+                    "transcription, no summary. Accepts several videos.")
     add_fetch_opts(p_fetch)
     add_workdir(p_fetch)
 
@@ -168,7 +224,7 @@ def build_parser():
         "transcribe", help="URL -> transcript only (old yt-transcribe)",
         description="Download the audio (or reuse the cached mp3), transcribe "
                     "it locally with whisper.cpp and write a plain-text "
-                    "transcript.")
+                    "transcript. Accepts several videos.")
     add_transcribe_opts(p_tr)
     add_workdir(p_tr)
 
@@ -218,13 +274,6 @@ def build_parser():
 # --------------------------------------------------------------------------- #
 # Command implementations that live in their own modules
 # --------------------------------------------------------------------------- #
-
-def cmd_transcribe(args):
-    from .transcribe import transcribe_video
-    workdir = resolve_workdir(args.workdir)
-    transcribe_video(args, workdir)
-    return 0
-
 
 def cmd_summarize(args):
     from .summarize import (output_path, parse_transcript, resolve_transcripts,
@@ -286,16 +335,19 @@ def cmd_summarize(args):
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    # 'yt-pipeline <url>' means 'yt-pipeline run <url>'
-    if argv and not argv[0].startswith("-") and argv[0] not in COMMANDS:
-        argv = ["run"] + list(argv)
+    # 'yt-pipeline <url>' means 'yt-pipeline run <url>'; the same shorthand
+    # works when the batch options lead: 'yt-pipeline --batch f.txt -j 3'.
+    if argv and argv[0] not in COMMANDS:
+        first = argv[0].split("=", 1)[0]
+        if not argv[0].startswith("-") or first in ("-b", "--batch", "-j", "--jobs"):
+            argv = ["run"] + list(argv)
 
     args = build_parser().parse_args(argv)
     if args.command is None:
         build_parser().print_help()
         raise SystemExit(2)
 
-    from .pipeline import cmd_doctor, cmd_fetch, cmd_run
+    from .pipeline import cmd_doctor, cmd_fetch, cmd_run, cmd_transcribe
     handlers = {
         "run": cmd_run,
         "fetch": cmd_fetch,

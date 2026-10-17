@@ -16,6 +16,7 @@ first use if missing.
 import json
 import re
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -83,28 +84,34 @@ def download_audio(video_id, audio_dir, ytdlp_extra, redownload):
     return mp3
 
 
+_model_lock = threading.Lock()  # one model download at a time in batch mode
+
+
 def ensure_model(model_path, model_url=None):
     if model_path.exists() and model_path.stat().st_size > 0:
         return model_path
     url = model_url or f"{MODEL_BASE_URL}/{model_path.name}"
     model_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = model_path.with_suffix(model_path.suffix + ".part")
-    log(f"Downloading whisper model {model_path.name} (one-time setup)...")
+    with _model_lock:  # re-check: another worker may have finished the download
+        if model_path.exists() and model_path.stat().st_size > 0:
+            return model_path
+        log(f"Downloading whisper model {model_path.name} (one-time setup)...")
 
-    def progress(count, block_size, total):
-        if total > 0:
-            pct = min(100, count * block_size * 100 // total)
-            print(f"\r  {pct:3d}% ({count * block_size // (1024 * 1024)} MiB)", end="",
-                  file=sys.stderr)
+        def progress(count, block_size, total):
+            if total > 0:
+                pct = min(100, count * block_size * 100 // total)
+                print(f"\r  {pct:3d}% ({count * block_size // (1024 * 1024)} MiB)", end="",
+                      file=sys.stderr)
 
-    try:
-        urllib.request.urlretrieve(url, tmp, reporthook=progress)
-    except Exception as e:
-        if tmp.exists():
-            tmp.unlink()
-        die(f"model download failed from {url}: {e}")
-    print(file=sys.stderr)
-    tmp.rename(model_path)
+        try:
+            urllib.request.urlretrieve(url, tmp, reporthook=progress)
+        except Exception as e:
+            if tmp.exists():
+                tmp.unlink()
+            die(f"model download failed from {url}: {e}")
+        print(file=sys.stderr)
+        tmp.rename(model_path)
     return model_path
 
 
