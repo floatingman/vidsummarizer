@@ -19,13 +19,17 @@ yt-pipeline run <url(s)>        ...explicit form, with all stage options
 yt-pipeline fetch <url(s)>      only download the mp3
 yt-pipeline transcribe <url(s)> only the transcript (the old yt-transcribe)
 yt-pipeline summarize <id|url|file> | --all    only the note (the old yt-summarize)
+yt-pipeline benchmark           score & compare the prompt variants
+yt-pipeline prompts <list|show|new|promote>   manage the prompt variants
 yt-pipeline doctor               check this machine for everything the pipeline needs
 ```
 
 All current behavior of the two original tools is preserved: LLM-readable
 plain-text transcripts, and markdown summaries of at most 500 words
 (actionable content preferred, otherwise an overview) that import into an
-Obsidian vault as regular notes. See "Output formats" below.
+Obsidian vault as regular notes. The summary *style* is selectable per run
+(`--style`: actionable, short, study guide, ...); see "Summary styles"
+below. See "Output formats" below.
 
 Every video-taking command (`<url(s)>` above) accepts a whole list of
 videos in one run: several arguments, comma-separated values, a `--batch`
@@ -217,10 +221,148 @@ bounded by the machine:
 ./yt-pipeline summarize --all --force                        # redo everything
 ./yt-pipeline summarize --all --out ~/vault/Video\ notes     # write straight into a vault
 ./yt-pipeline summarize jNQXAC9IVRw --lang en                # force note language
+./yt-pipeline summarize jNQXAC9IVRw --style short            # pick a summary style
 ```
 
 Progress goes to stderr; transcripts and notes are files; `--stdout` on
 run/summarize prints the note to stdout instead.
+
+### Summary styles (`--style`)
+
+The summarize step is selectable per run: the same transcript can be
+turned into different kinds of output, chosen with `--style NAME` on
+`summarize` or `run`:
+
+```bash
+./yt-pipeline summarize iCvmsMzlF7o --style short        # brief overview
+./yt-pipeline summarize iCvmsMzlF7o --style study-guide  # study companion
+./yt-pipeline summarize --all --style short --out ~/vault/Video\ notes
+./yt-pipeline run url1,url2 --style actionable           # full pipeline, action list
+```
+
+Built-in styles:
+
+| Style | What you get | Word cap |
+|---|---|---|
+| `actionable` | the concrete steps, decisions and recommendations as a numbered action list, always (even when the default would fall back to an overview); if the video has nothing actionable the note says so instead of inventing steps | 500 |
+| `short` | a brief overview: one short paragraph on what the video covers and its single most important takeaway | 150 |
+| `study-guide` | key concepts explained in your own words, a definitions list, and questions to test understanding; a study companion for reviewing the material | 700 |
+| *(no `--style`)* | the standard summary, unchanged: actionable steps when the video has them, otherwise an overview | 500 |
+
+Word caps: `short` uses 150 and `study-guide` 700 because their output
+shape clearly needs a different bound than the usual 500 (one paragraph
+stays far below it; concepts + definitions + test questions need a little
+room above it). An explicit `--max-words N` always wins over a style's own
+cap. Everything else is identical for every style: summaries are written
+by the local model only (Ollama), the output is one Obsidian-ready
+markdown note per video, long transcripts go through the same map-reduce
+notes pass, and the over-limit rewrite/trim pass enforces the cap. The
+note's frontmatter records which prompt variant produced it (`prompt:`),
+so notes from different styles are distinguishable in the vault.
+
+A style is just a prompt variant file (see "Adding a new style" below),
+and `--style` accepts any variant name, so a benchmark candidate can be
+tried per run too: `--style v2-tighter`. An unknown name fails at startup
+with the list of available styles.
+
+`summarize --all` treats a video as done once *any* note exists, whatever
+style produced it; re-summarize in another style with `--force`, or write
+to a different `--out` directory to keep both versions of the note.
+
+### Adding a new style
+
+Styles are prompt variant files with a small `style` block, so adding one
+is a new file, not a code change:
+
+1. Copy a starting point:
+   `yt-pipeline prompts new deep-dive --from study-guide`
+   (creates `<workdir>/prompts/deep-dive.json`; in a source checkout it
+   lands in the repo's `prompts/`, where you can also just copy a `.json`
+   file by hand).
+2. Edit the JSON:
+   - `prompts.system/final/notes/reduce/condense`: the five prompt
+     templates, plain text with placeholders (`{transcript}`,
+     `{max_words}`, `{lang_instr}`, `{notes}`, `{chunk}`, ...). The output
+     expectations (which headings, sections and lists the note uses) live
+     in this wording, so be as specific as the built-ins are.
+   - `style`: what makes the variant a style; every key is optional:
+     `label` (name shown in messages), `summary` (one-line description),
+     `max_words` (the style's own word cap, applied when `--max-words` is
+     not given), `fallback_heading` (heading prepended if the model output
+     has no `##` heading). A variant without a `style` block is a plain
+     variant: still selectable with `--style NAME`, just not advertised as
+     a style.
+   - set `description` (shown by `yt-pipeline prompts list`) and bump
+     `version` when you later change a file that exists somewhere.
+3. Use and compare it:
+   `yt-pipeline summarize <id> --style deep-dive`, and
+   `yt-pipeline benchmark --prompts deep-dive,study-guide` to score it
+   against another style on the benchmark set.
+
+Names are lowercase letters, digits and dashes, matching the file name
+(`prompts/<name>.json`). Malformed files (unknown placeholders, bad
+`style` values, wrong `name`) are rejected at load time with a precise
+message, so a typo fails at startup instead of mid-summary. Which
+directory the files come from follows the usual prompts resolution
+(`--prompts-dir`, `$YT_PROMPTS_DIR`, `<workdir>/prompts`, the copy bundled
+into the executable); `yt-pipeline prompts list` shows the directory in
+use and everything it found.
+
+### Prompt benchmarking (`benchmark`)
+
+Summary quality is measurable, so prompt changes can be compared instead
+of guessed at. `benchmark` runs the summarizer over a fixed benchmark set
+of transcripts with one or more prompt variants and scores every summary:
+
+```bash
+yt-pipeline benchmark                              # every variant in the prompts dir
+yt-pipeline benchmark --prompts v1-baseline,short  # just these, compared
+yt-pipeline benchmark --judge-model llama3.2       # a different local judge
+yt-pipeline benchmark --min-overall 3.5            # quality gate (make bench-real)
+```
+
+**The benchmark set** is `benchmarks/set.json` plus
+`benchmarks/transcripts/` (three transcripts: the summarize-stage test
+fixture, an actionable how-to video and a conceptual talk, so both summary
+kinds are exercised). Each case declares the expected `kind`
+(`actionable`/`overview`) and `must_contain` facts that must survive
+summarization. `--set FILE` points at another set; a deployed executable
+reads the copy bundled into it.
+
+**Scoring** has two halves:
+
+- *Automatic checks* (deterministic, offline): word cap, markdown/Obsidian
+  structure (top heading, no code fences, no rules, no H1), the right
+  summary kind for the case, and the must-contain facts. A style variant
+  is checked against its own top heading and word cap.
+- *LLM-as-judge*: a local model (Ollama; `--judge-model`, default the
+  summarizer's own model) rates each summary 1-5 against a rubric:
+  faithfulness to the transcript, actionability, clarity. Judging never
+  leaves the machine, like the rest of the pipeline.
+
+A case's `Overall` = mean of the three judge dimensions minus 0.25 per
+failed automatic check; variants are ranked by their average. The report
+is printed and written to `<workdir>/benchmarks/results/<timestamp>/`
+(`report.md`, machine-readable `results.json`, and the generated
+`summaries/<variant>/<case>.md` for eyeballing). Judged scores vary a
+little from run to run; compare variants within one run, and re-run to
+confirm a close call.
+
+**Promoting a winner is manual, by design**: the report informs, the
+human decides. `yt-pipeline prompts promote NAME` asks for confirmation
+(`--yes` skips it), then points `active.txt` in the prompts directory at
+the winner, and every later `run`/`summarize` uses it. In a checkout that
+pointer is a versioned file in `prompts/` (commit it); with a deployed
+executable the variants are first materialized into `<workdir>/prompts`,
+then the pointer is written there.
+
+**Quality gate**: `make bench-real` (= `benchmark --min-overall 3.5`)
+exits non-zero when the *active* variant scores below 3.5 overall or
+fails an automatic check, so a regression in summary quality is caught
+like any other test failure. The offline suite (`make test`) already
+causes the deterministic half on every run: structure checks, judge-answer
+parsing, scoring/report plumbing, and that the shipped v1-baseline is
+byte-identical to the historical prompts.
 
 ### Options
 
@@ -251,9 +393,10 @@ Summarization stage (`run`, `summarize`):
 | Option | Default | Description |
 |---|---|---|
 | `--model NAME` (summarize) / `--llm-model NAME` (run) | `qwen3.6` (env `OLLAMA_MODEL`) | Ollama model tag |
+| `--style NAME` | none | summary style: the shape the note takes (built-in: `actionable`, `short`, `study-guide`; any other prompt variant name works too). Default: the standard actionable-or-overview summary. See "Summary styles" |
 | `--out DIR` | `<workdir>/summaries` | output directory for notes |
 | `--host URL` | `http://127.0.0.1:11434` (env `OLLAMA_HOST`) | Ollama base URL |
-| `--max-words N` | 500 | hard word cap for the summary |
+| `--max-words N` | 500, or the selected style's own cap | hard word cap for the summary (explicit values beat the style's cap) |
 | `--lang CODE` (summarize) / `--summary-lang CODE` (run) | transcript's language | force the summary language |
 | `--chunk-words N` | 1500 | words per map-reduce chunk for long transcripts (`0` = never chunk) |
 | `--notes-words N` | 220 | word cap for per-chunk notes |
@@ -261,12 +404,16 @@ Summarization stage (`run`, `summarize`):
 | `--force` | off | re-summarize even if a note exists (`--all` mode) |
 | `--stdout` | off | print the note instead of writing a file |
 | `--no-autostart` | off | never start `ollama serve` ourselves |
+| `--prompts-dir DIR` | see "Adding a new style" | directory holding the prompt variant `*.json` files (default: `$YT_PROMPTS_DIR`, else `<workdir>/prompts` if it has any, else the bundled copy) |
 | `--timeout S` | 900 | per-request timeout |
 | `--max-num-ctx N` | 32768 | ceiling for the Ollama context window |
 
 `summarize` only: `--all`, `--transcripts DIR` (default `$YT_TRANSCRIPTS_DIR`
-else `<workdir>/transcripts`). All commands: `--workdir DIR` (default
-`$YT_WORKDIR`, else the executable's own directory).
+else `<workdir>/transcripts`). `benchmark` and `prompts` have their own
+options (sets, judge model, quality gate, confirmation); see
+`yt-pipeline benchmark --help` / `yt-pipeline prompts --help`. All
+commands: `--workdir DIR` (default `$YT_WORKDIR`, else the executable's
+own directory).
 
 Accepted URL forms: `youtube.com/watch?v=ID`, `youtu.be/ID`,
 `youtube.com/shorts/ID`, `/live/ID`, `/embed/ID`, or a bare 11-character
@@ -288,6 +435,8 @@ Everything lives in one work directory, resolved in this order:
   transcripts/    plain-text transcripts
   summaries/      Obsidian-ready markdown notes
   models/         whisper GGML models (auto-downloaded on first use)
+  prompts/        prompt variants + active.txt (created on first write)
+  benchmarks/     the fixed benchmark set; results/ holds the reports
 ```
 
 Old data can be adopted by copying the old projects' `models/`,
@@ -305,16 +454,19 @@ words at sentence ends, hard cap 500 words). Designed for LLM consumption.
 
 **Summary note** (`summaries/<Title>.md`): Obsidian-ready markdown with YAML
 frontmatter properties (`title`, `channel`, `date`, `url`, `video_id`,
-`duration`, `language`, `transcribed_with`, `summarized_with`,
+`duration`, `language`, `transcribed_with`, `summarized_with`, `prompt`,
 `summary_words`, `summarizer`, `created`, `tags`), a `# title` heading, a
 source line with the YouTube link, then the summary: `## Actionable
 summary` with numbered `### Actionable steps` when the video has actionable
-content, otherwise a `## Overview` of 2-4 paragraphs. The summary body is
-capped at 500 words (`--max-words`); if the model runs over it is asked
-once for a tighter rewrite, then trimmed at a sentence boundary. Long
-transcripts are summarized map-reduce style (per-chunk notes, then a final
-pass). The note's filename strips characters Obsidian forbids; on a name
-clash between different videos the video id is appended.
+content, otherwise a `## Overview` of 2-4 paragraphs. With `--style NAME`
+the body instead takes that style's shape (see "Summary styles"), and the
+`prompt:` frontmatter property records which prompt variant (style) wrote
+the note. The summary body is capped at 500 words (`--max-words`, or the
+selected style's own cap); if the model runs over it is asked once for a
+tighter rewrite, then trimmed at a sentence boundary. Long transcripts are
+summarized map-reduce style (per-chunk notes, then a final pass). The
+note's filename strips characters Obsidian forbids; on a name clash
+between different videos the video id is appended.
 
 ## Differences from the original two tools
 
@@ -344,9 +496,13 @@ yt-pipeline/
                          video-list parsing, thread-safe tagged logging
     transcribe.py        yt-dlp + whisper.cpp stage (from yt-transcribe)
     summarize.py         Ollama stage (from yt-summarize)
+    prompts.py           versioned prompt variants: load/validate/promote
+    bench.py             benchmark command: scoring, local LLM judge, reports
     batch.py             worker pool: list of videos, overlapped, failures isolated
     pipeline.py          run/fetch/transcribe/doctor commands
   tests/                 unit + E2E test suite: `make test` (see Testing)
+  prompts/               the summarizer's prompt variants (versioned JSON)
+  benchmarks/            fixed benchmark set (set.json + transcripts/)
   build.sh               builds dist/yt-pipeline (zipapp)
   Makefile               test / build entry points
   .github/               CI workflows: test gate + automated releases (see below)
@@ -369,6 +525,8 @@ make test-real   # opt-in: REAL whisper-cli + local model on the bundled
                  # speech fixture (no network)
 make test-live   # opt-in: a real 19-second YouTube video through the real
                  # pipeline (network + model; ~10-30s)
+make bench-real  # opt-in: benchmark the prompt variants with the real
+                 # local LLM; gates on the active variant's score
 ```
 
 - **Unit tests** (`tests/unit/`) cover the modules in isolation with every
@@ -376,6 +534,11 @@ make test-live   # opt-in: a real 19-second YouTube video through the real
   logging, the subprocess wrapper and tool detection, workdir resolution
   (including the read-only fallback), paragraphing rules and the transcript
   format, transcript parsing, chunking, markdown cleanup and note building,
+  prompt variant loading/validation and the style metadata (`--style`),
+  the prompt-variant registry end to end (active pointer, promotion,
+  materialization, the byte-exact v1-baseline guard), the benchmark
+  harness (set loading, automatic checks, judge-answer parsing, scoring,
+  reports),
   the Ollama HTTP client (against an in-process fake server), the worker
   pool's failure containment, and the CLI parser/dispatch.
 - **E2E tests** (`tests/e2e/`) run the real CLI (`python3 -m ytpipeline`)
@@ -386,9 +549,13 @@ make test-live   # opt-in: a real 19-second YouTube video through the real
   seeded, so nothing downloads); covered: fetch caching, transcribe
   (timestamps, wav fallback, audio retention), batch lists/files, dedup,
   failure isolation and exit codes, summarize (by id/url/file, `--all`
-  skip logic, over-limit rewrite, language override) and the full `run`
-  pipeline. If `dist/yt-pipeline` exists, one extra check runs the built
-  executable too.
+  skip logic, over-limit rewrite, language override, `--style` selection
+  including its own word cap) and the full `run` pipeline, plus the
+  benchmark and prompts commands (report writing, the `--min-overall`
+  gate, promotion with and without confirmation) against the fake server
+  doubling as the judge. If
+  `dist/yt-pipeline` exists, extra checks run the built executable too
+  (including one `--style` run, proving the styles are packed into it).
 
 ### Fixtures (`tests/fixtures/`)
 
@@ -398,6 +565,12 @@ make test-live   # opt-in: a real 19-second YouTube video through the real
 | `meta/sample.json` | canned `yt-dlp -J` metadata returned by the fake yt-dlp |
 | `whisper/sample.json` | canned whisper-cli JSON output (two paragraphs, separated by a 1.7s silence gap) |
 | `transcript/sample.txt` | a finished transcript (metadata header + body) for the summarize stage |
+
+The benchmark set lives next door in `benchmarks/` (`set.json` +
+`transcripts/`): `sample-short.txt` is a copy of the `transcript/sample.txt`
+fixture, and `howto-tls.txt` / `overview-history.txt` extend it with an
+actionable and an overview video. A unit test keeps the copy in sync with
+the fixture, so the set and the test suite cannot drift apart.
 
 ### Adding a regression test
 
