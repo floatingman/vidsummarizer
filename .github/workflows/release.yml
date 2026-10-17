@@ -69,7 +69,7 @@ jobs:
           if [ -n "${PREV:-}" ]; then
             echo "== appending commit log since $PREV"
             printf '\n\n## Changes since %s\n\n' "$PREV" >> "$WORK/notes.md"
-            git log --no-merges --pretty='* %s (%h)' "$PREV..HEAD" >> "$WORK/notes.md"
+            python3 .github/format-changelog.py "$PREV" >> "$WORK/notes.md"
             printf '\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
               "$GITHUB_REPOSITORY" "$PREV" "$TAG" >> "$WORK/notes.md"
           fi
