@@ -28,7 +28,7 @@ FAKE_BIN = TESTS / "fakes"
 # Env vars that change the tool's behavior; cleared for every CLI run so
 # tests are deterministic regardless of the developer's environment.
 LEAKY_ENV_VARS = ("YT_WORKDIR", "YT_TRANSCRIPTS_DIR", "YT_JOBS",
-                  "OLLAMA_HOST", "OLLAMA_MODEL")
+                  "OLLAMA_HOST", "OLLAMA_MODEL", "YT_PROMPTS_DIR")
 
 
 # --------------------------------------------------------------------------- #
@@ -232,12 +232,12 @@ def tool_log(workdir):
     return out
 
 
-def run_cli(args, env, timeout=180):
+def run_cli(args, env, timeout=180, input=None):
     """Run `python3 -m ytpipeline ARGS` from the repo root."""
     return subprocess.run(
         [sys.executable, "-m", "ytpipeline", *args],
         cwd=str(REPO), env=env, capture_output=True, text=True,
-        errors="replace", timeout=timeout)
+        errors="replace", timeout=timeout, input=input)
 
 
 class TempWorkdirMixin(unittest.TestCase):

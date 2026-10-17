@@ -154,11 +154,14 @@ def cmd_run(args):
             think=args.think,
             max_words=args.max_words,
             lang=args.summary_lang,
+            style=getattr(args, "style", None),
             chunk_words=args.chunk_words,
             notes_words=args.notes_words,
             max_num_ctx=args.max_num_ctx,
             force=args.force,
             stdout=args.stdout,
+            prompts_dir=getattr(args, "prompts_dir", None),
+            workdir=str(workdir),
         )
 
     def one(video_id, ollama=None):

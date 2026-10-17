@@ -23,10 +23,14 @@ fi
 VERSION=$("$PYTHON" -c "import sys; sys.path.insert(0, '.'); from ytpipeline import VERSION; print(VERSION)")
 
 rm -rf build dist
-mkdir -p build/ytpipeline dist
+mkdir -p build/ytpipeline/prompts dist
 
 # Stage only the package (no README, .git, data dirs) into the archive root.
 cp ytpipeline/*.py build/ytpipeline/
+
+# The summarizer's prompt variants are data of the package itself,
+# so the executable stays self-contained.
+cp prompts/*.json build/ytpipeline/prompts/
 
 "$PYTHON" -m zipapp build \
     --python "/usr/bin/env python3" \
@@ -38,6 +42,7 @@ chmod +x dist/yt-pipeline
 
 # Smoke test the freshly built executable.
 ./dist/yt-pipeline --version
+./dist/yt-pipeline prompts list >/dev/null
 echo "built dist/yt-pipeline (yt-pipeline $VERSION, $(du -h dist/yt-pipeline | cut -f1))"
 echo "transfer it to another machine with e.g.:"
 echo "  scp dist/yt-pipeline user@host:~/yt-pipeline/   # then: ssh user@host 'cd ~/yt-pipeline && ./yt-pipeline doctor'"

@@ -28,6 +28,11 @@ TOOL = f"yt-pipeline {VERSION} (local LLM via Ollama)"
 
 DEFAULT_MODEL = "qwen3.6"
 
+# Hard word ceiling for summary text. --max-words overrides it; a style
+# variant may carry its own cap (prompts/<style>.json "style.max_words")
+# which applies when --max-words was not given.
+DEFAULT_MAX_WORDS = 500
+
 # Language codes -> instruction phrase (fallback: "the same language as the
 # transcript").  Anything not listed falls back to that phrase, which works.
 LANG_NAMES = {
@@ -262,76 +267,41 @@ class Ollama:
 
 # --------------------------------------------------------------------------- #
 # Prompting
+#
+# The five prompt templates live as versioned JSON "variant" files in the
+# project (prompts/*.json), not as constants here; see ytpipeline/prompts.py.
+# v1-baseline.json holds the exact historical wording of this stage.
 # --------------------------------------------------------------------------- #
 
-SYSTEM_PROMPT = (
-    "You are a careful, precise summarizer for a personal note-taking app. "
-    "You only state facts found in the transcript; you never invent details, "
-    "numbers, names or claims. You write clean, compact markdown."
-)
+from .prompts import (PromptSet, load_active, load_variant,
+                      resolve_prompts_dir, styles_in, variant_names)
 
-FINAL_PROMPT = """Summarize the video transcript below for someone who has not watched it.
 
-Decide what kind of video it is:
-- If the transcript contains ACTIONABLE information (steps, instructions, how-to advice, concrete recommendations the viewer can act on), the summary must capture that actionable content: a short context paragraph, then a numbered list "### Actionable steps" where each item is a concrete step, recommendation or decision the viewer can take, with the details needed to act on it (tools, dosages, settings, thresholds, caveats mentioned in the video).
-- Otherwise, give an OVERVIEW of the content: 2-4 short paragraphs covering the main points and their meaning.
+def prompts_for(opts):
+    """The prompt variant to use for this run, in priority order:
 
-Hard rules:
-- {lang_instr}
-- The WHOLE answer must be at most {max_words} words; prefer fewer.
-- Start with exactly one top heading line, nothing before it:
-  "## Actionable summary" for an actionable video, or "## Overview" otherwise.
-  You may add "### Actionable steps" (and at most one other "###" subheading) below it.
-- No preamble, no closing remarks, no title of the video, no horizontal rules, no code fences.
-- Do not use headings above "##". Plain markdown only (bold, lists).
-- Ground every statement in the transcript. If the video presents claims as the speaker's opinion, keep that framing.
-- If the transcript contains [MM:SS] timestamps you may cite the most relevant ones sparingly, like "(12:34)".
-
-Transcript:
-
-{transcript}"""
-
-NOTES_PROMPT = """You are given part {i} of {n} of a longer video transcript. Extract compact notes from it that a summarizer can use later.
-
-Capture, as a plain markdown bullet list (no headings):
-- the main points made in this part;
-- any actionable steps, instructions or concrete recommendations, with the details needed to act on them (tools, names, numbers, settings, caveats);
-- important facts, definitions or examples worth keeping.
-
-Rules:
-- {lang_instr}
-- At most {notes_words} words.
-- Do not add anything not in this part of the transcript.
-
-Transcript part {i} of {n}:
-
-{chunk}"""
-
-REDUCE_PROMPT = """Below are notes taken from the parts of a video transcript (the notes appear in order). Turn them into the final summary for someone who has not watched the video.
-
-Decide what kind of video it is:
-- If the notes contain ACTIONABLE information (steps, instructions, how-to advice, concrete recommendations the viewer can act on), the summary must capture that actionable content: a short context paragraph, then a numbered list "### Actionable steps" where each item is a concrete step, recommendation or decision the viewer can take, with the details needed to act on it.
-- Otherwise, give an OVERVIEW of the content: 2-4 short paragraphs covering the main points and their meaning.
-
-Hard rules:
-- {lang_instr}
-- The WHOLE answer must be at most {max_words} words; prefer fewer.
-- Deduplicate: the notes repeat things across parts; each point appears once.
-- Start with exactly one top heading line, nothing before it:
-  "## Actionable summary" for an actionable video, or "## Overview" otherwise.
-  You may add "### Actionable steps" (and at most one other "###" subheading) below it.
-- No preamble, no closing remarks, no video title, no horizontal rules, no code fences.
-- Ground every statement in the notes.
-
-Notes:
-
-{notes}"""
-
-CONDENSE_PROMPT = """Your answer below is {actual} words, over the hard limit of {max_words} words. Rewrite it to at most {max_words} words (prefer clearly fewer), keeping the same language, the same first "##" heading, the same structure and the same key content, just tighter. Output only the rewritten markdown, nothing else.
-
-Answer:
-
-{text}"""
+    1. opts.prompts    - pinned by a caller (benchmark, tests)
+    2. opts.style      - a summary style (or any variant) chosen per run
+                         with --style NAME
+    3. the active variant of the resolved prompts directory (the default
+       summary behavior, untouched by styles)
+    """
+    pinned = getattr(opts, "prompts", None)
+    if isinstance(pinned, PromptSet):
+        return pinned
+    d = resolve_prompts_dir(getattr(opts, "prompts_dir", None),
+                            getattr(opts, "workdir", None))
+    style = (getattr(opts, "style", None) or "").strip()
+    if style:
+        names = variant_names(d)
+        if style not in names:
+            styled = ", ".join(f"{s.name} ({s.style_label})"
+                               for s in styles_in(d)) or "none"
+            die(f"unknown style '{style}' in {d}\n"
+                f"styles: {styled}\n"
+                f"all prompt variants: {', '.join(names) or 'none'}")
+        return load_variant(d, style)
+    return load_active(d)
 
 
 # --------------------------------------------------------------------------- #
@@ -354,9 +324,11 @@ def gen_options(user_content_words, gen_word_budget, opts, temperature):
     }
 
 
-def clean_markdown(text):
+def clean_markdown(text, fallback="## Overview"):
     """Normalize model output: keep from the first '## ' heading on, collapse
-    whitespace, drop code fences if the model wrapped the answer."""
+    whitespace, drop code fences if the model wrapped the answer. A summary
+    without any '##' heading gets `fallback` prepended (styles use their own
+    top heading there)."""
     text = text.strip()
     # strip a wrapping code fence
     fence = re.match(r"^```[a-zA-Z]*\n(.*)\n```$", text, re.S)
@@ -369,7 +341,7 @@ def clean_markdown(text):
     if idx is not None:
         text = text[idx:]
     else:
-        text = "## Overview\n\n" + text
+        text = fallback + "\n\n" + text
     text = re.sub(r"\n{3,}", "\n\n", text).strip()
     return text
 
@@ -411,6 +383,10 @@ def summarize_transcript(ollama, path, opts):
         die(f"{path}: transcript is empty")
     vid = meta.get("video_id", "")
     tag = vid or os.path.basename(path)
+    ps = prompts_for(opts)
+    # a style may set its own word cap; an explicit --max-words always wins
+    if getattr(opts, "max_words", None) is None:
+        opts.max_words = ps.max_words or DEFAULT_MAX_WORDS
     lang_instr = language_instruction(opts, meta, body)
     title = meta.get("title") or os.path.splitext(os.path.basename(path))[0]
 
@@ -426,12 +402,13 @@ def summarize_transcript(ollama, path, opts):
     body_words = count_words(body)
 
     if len(chunks) <= 1:
-        log(f"[{tag}] {body_words} words -> single pass ({ollama.model})")
-        prompt = FINAL_PROMPT.format(
+        log(f"[{tag}] {body_words} words -> single pass ({ollama.model}, "
+            f"prompt {ps.name})")
+        prompt = ps.final.format(
             lang_instr=lang_instr, max_words=opts.max_words,
             transcript=context + "\n\n" + body)
         options = gen_options(count_words(prompt), opts.max_words, opts, 0.3)
-        summary, st = ollama.chat(SYSTEM_PROMPT, prompt, options, think=opts.think)
+        summary, st = ollama.chat(ps.system, prompt, options, think=opts.think)
         log(f"[{tag}] summary drafted in {st['s']:.0f}s "
             f"({st['gen_tok']} tok, {st['tok_s']:.1f} tok/s)")
     else:
@@ -439,43 +416,45 @@ def summarize_transcript(ollama, path, opts):
             f"of <= {opts.chunk_words} words ({ollama.model})")
         notes = []
         for i, chunk in enumerate(chunks, 1):
-            prompt = NOTES_PROMPT.format(
+            prompt = ps.notes.format(
                 i=i, n=len(chunks), lang_instr=lang_instr,
                 notes_words=opts.notes_words, chunk=chunk)
             options = gen_options(count_words(prompt), opts.notes_words, opts, 0.3)
-            note, st = ollama.chat(SYSTEM_PROMPT, prompt, options, think=opts.think)
+            note, st = ollama.chat(ps.system, prompt, options, think=opts.think)
             notes.append(note.strip())
             log(f"[{tag}] notes {i}/{len(chunks)}: {count_words(note)} words "
                 f"in {st['s']:.0f}s ({st['tok_s']:.1f} tok/s)")
         combined = "\n\n".join(notes)
-        prompt = REDUCE_PROMPT.format(
+        prompt = ps.reduce.format(
             lang_instr=lang_instr, max_words=opts.max_words,
             notes=context + "\n\n" + combined)
         options = gen_options(count_words(prompt), opts.max_words, opts, 0.3)
-        summary, st = ollama.chat(SYSTEM_PROMPT, prompt, options, think=opts.think)
+        summary, st = ollama.chat(ps.system, prompt, options, think=opts.think)
         log(f"[{tag}] final summary from notes in {st['s']:.0f}s "
             f"({st['gen_tok']} tok, {st['tok_s']:.1f} tok/s)")
 
-    summary = clean_markdown(summary)
+    summary = clean_markdown(summary, ps.fallback_heading)
     words = count_words(summary)
     if words > opts.max_words:
         log(f"[{tag}] {words} words > {opts.max_words}; asking for a tighter rewrite")
-        prompt = CONDENSE_PROMPT.format(actual=words, max_words=opts.max_words,
-                                       text=summary)
+        prompt = ps.condense.format(actual=words, max_words=opts.max_words,
+                                    text=summary)
         options = gen_options(count_words(prompt), opts.max_words, opts, 0.2)
-        summary, st = ollama.chat(SYSTEM_PROMPT, prompt, options, think=opts.think)
-        summary = clean_markdown(summary)
+        summary, st = ollama.chat(ps.system, prompt, options, think=opts.think)
+        summary = clean_markdown(summary, ps.fallback_heading)
         if count_words(summary) > opts.max_words:
             summary = trim_to_word_cap(summary, opts.max_words)
     summary_words = count_words(summary)
 
-    note = build_note(title, meta, summary, summary_words, ollama.model)
+    note = build_note(title, meta, summary, summary_words, ollama.model,
+                      prompt_name=ps.name)
     info = {"video_id": vid, "words": summary_words,
-            "elapsed": time.time() - t_start, "chunks": len(chunks)}
+            "elapsed": time.time() - t_start, "chunks": len(chunks),
+            "summary": summary, "prompt": ps.name}
     return note, info
 
 
-def build_note(title, meta, summary, summary_words, model):
+def build_note(title, meta, summary, summary_words, model, prompt_name=""):
     fm = [
         "---",
         f"title: {yaml_str(title)}",
@@ -487,12 +466,16 @@ def build_note(title, meta, summary, summary_words, model):
         f"language: {yaml_str(meta.get('language', ''))}",
         f"transcribed_with: {yaml_str(meta.get('model', ''))}",
         f"summarized_with: {yaml_str(model)}",
+    ]
+    if prompt_name:
+        fm.append(f"prompt: {yaml_str(prompt_name)}")
+    fm.extend([
         f"summary_words: {summary_words}",
         f"summarizer: {yaml_str(TOOL)}",
         f"created: {yaml_str(datetime.now(timezone.utc).isoformat(timespec='seconds'))}",
         "tags: [youtube, video-summary]",
         "---",
-    ]
+    ])
     header_meta = []
     if meta.get("channel"):
         header_meta.append(f"**Channel:** {meta['channel']}")
@@ -595,6 +578,9 @@ def summarize_targets(paths, opts, ollama=None):
         ollama = Ollama(opts.host, opts.model, opts.timeout,
                         no_autostart=opts.no_autostart)
         ollama.check_model()
+
+    if not isinstance(getattr(opts, "prompts", None), PromptSet):
+        opts.prompts = prompts_for(opts)  # resolve once for the whole run
 
     failures = 0
     for path in paths:

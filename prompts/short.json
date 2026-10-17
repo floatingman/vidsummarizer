@@ -1,0 +1,19 @@
+{
+  "name": "short",
+  "version": 1,
+  "description": "Short style: a brief overview of the video in one short paragraph (150-word cap, below the usual 500).",
+  "created": "2026-10-16",
+  "style": {
+    "label": "Short",
+    "summary": "a brief overview: one short paragraph on what the video covers and its main takeaway",
+    "max_words": 150,
+    "fallback_heading": "## Overview"
+  },
+  "prompts": {
+    "system": "You are a careful, precise summarizer for a personal note-taking app. You only state facts found in the transcript; you never invent details, numbers, names or claims. You write clean, compact markdown, and you keep answers short.",
+    "final": "Summarize the video transcript below for someone deciding whether to watch it.\n\nWrite a SHORT OVERVIEW: one short paragraph (2-4 sentences) stating what the video covers and its single most important point or takeaway. Capture the essence, not an inventory of topics.\n\nHard rules:\n- {lang_instr}\n- The WHOLE answer must be at most {max_words} words; prefer fewer.\n- Start with exactly one top heading line, nothing before it: \"## Overview\".\n- No subheadings, no lists, no preamble, no closing remarks, no title of the video, no horizontal rules, no code fences.\n- Do not use headings above \"##\".\n- Ground every statement in the transcript. If the video presents claims as the speaker's opinion, keep that framing.\n- You may cite at most one [MM:SS] timestamp, like \"(12:34)\".\n\nTranscript:\n\n{transcript}",
+    "notes": "You are given part {i} of {n} of a longer video transcript. Extract compact notes from it that a summarizer can use later.\n\nCapture, as a plain markdown bullet list (no headings):\n- the main points made in this part;\n- the single most important takeaway, if this part contains one.\n\nRules:\n- {lang_instr}\n- At most {notes_words} words.\n- Do not add anything not in this part of the transcript.\n\nTranscript part {i} of {n}:\n\n{chunk}",
+    "reduce": "Below are notes taken from the parts of a video transcript (the notes appear in order). Turn them into the final SHORT OVERVIEW for someone who has not watched the video: one short paragraph (2-4 sentences) stating what the video covers and its single most important point or takeaway.\n\nHard rules:\n- {lang_instr}\n- The WHOLE answer must be at most {max_words} words; prefer fewer.\n- Deduplicate: the notes repeat things across parts; each point appears once.\n- Start with exactly one top heading line, nothing before it: \"## Overview\".\n- No subheadings, no lists, no preamble, no closing remarks, no video title, no horizontal rules, no code fences.\n- Do not use headings above \"##\".\n- Ground every statement in the notes.\n\nNotes:\n\n{notes}",
+    "condense": "Your answer below is {actual} words, over the hard limit of {max_words} words. Rewrite it to at most {max_words} words (prefer clearly fewer), keeping the same language, the same first \"##\" heading, the same structure and the same key content, just tighter. Output only the rewritten markdown, nothing else.\n\nAnswer:\n\n{text}"
+  }
+}
