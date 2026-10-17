@@ -429,9 +429,10 @@ releases automatically:
   `ytpipeline/__init__.py` has no `v<VERSION>` release yet, the workflow
   tags that commit, builds `dist/yt-pipeline` and attaches it
   (uncompressed, as documented above) to a GitHub Release with notes from
-  `.github/release-notes-template.md` plus a generated change list since
-  the previous release. A push without a version bump runs the tests and
-  does nothing else.
+  `.github/release-notes-template.md` plus the commits since the previous
+  release, each with its full message
+  (`.github/format-changelog.py`), so every change explains itself.
+  A push without a version bump runs the tests and does nothing else.
 
 So the normal release procedure is: bump `VERSION`, update docs if needed,
 `make test`, commit, push. If the gate is red, nothing is released. The
