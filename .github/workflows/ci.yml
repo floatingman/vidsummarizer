@@ -13,7 +13,7 @@ on:
 jobs:
   test:
     name: tests (py${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest flips to Ubuntu 26 on 2026-10-19
     strategy:
       fail-fast: false
       matrix:
@@ -21,7 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6   # v6 runs on Node 24 (v5 is deprecated Node 20)
         with:
           python-version: ${{ matrix.python }}
 

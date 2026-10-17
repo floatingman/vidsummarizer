@@ -29,13 +29,13 @@ jobs:
   publish:
     name: build + publish
     needs: gate
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04   # pinned: ubuntu-latest flips to Ubuntu 26 on 2026-10-19
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0        # full history: the changelog lists commits since the previous release
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6   # v6 runs on Node 24 (v5 is deprecated Node 20)
         with:
           python-version: "3.14"
 
