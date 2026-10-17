@@ -56,7 +56,6 @@ import importlib.resources
 import json
 import os
 import re
-import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -218,7 +217,11 @@ def writable_prompts_dir(read_dir, workdir, explicit=None):
     if src is not None:
         for f in sorted(src.iterdir(), key=lambda f: f.name):
             if f.name.endswith(".json"):
-                shutil.copyfile(str(f), str(dest / f.name))
+                # copy through the Traversable API: src may live inside
+                # the zipapp, where str(f) is not a real filesystem
+                # path and shutil.copyfile cannot read it
+                (dest / f.name).write_text(f.read_text(encoding="utf-8"),
+                                           encoding="utf-8")
         log(f"copied the prompt variants to {dest}")
     return dest
 
@@ -332,7 +335,10 @@ def active_name(d):
     f = d / ACTIVE_FILE
     try:
         name = f.read_text(encoding="utf-8").strip()
-    except (OSError, AttributeError):
+    except (OSError, AttributeError, KeyError):
+        # no active.txt -> the default variant. KeyError: py3.9's
+        # zipfile.Path (importlib.resources inside the zipapp) raises it
+        # for a missing entry; newer versions raise FileNotFoundError.
         return DEFAULT_VARIANT
     return name or DEFAULT_VARIANT
 

@@ -251,6 +251,59 @@ def run_cli(args, env, timeout=180, input=None):
         errors="replace", timeout=timeout, input=input)
 
 
+class FakeZipPath:
+    """A Traversable standing in for importlib.resources' zipfile.Path
+    as py3.9 exposes it inside the zipapp. Two properties matter for
+    regression tests (the packed prompts/ and benchset/ must work through
+    them):
+
+    - str() is NOT a real filesystem path (the zip archive's internal
+      name), so code must not Path(str(p)) or open(str(p)) it;
+    - read_text() of a missing entry raises KeyError (newer Pythons
+      raise FileNotFoundError instead).
+
+    Construct with a {"rel/path/name": text} mapping; iterdir() walks it.
+    """
+
+    def __init__(self, entries, at=""):
+        self._entries = entries
+        self._at = at
+
+    def __truediv__(self, child):
+        at = f"{self._at}/{child}" if self._at else str(child)
+        return FakeZipPath(self._entries, at)
+
+    @property
+    def name(self):
+        return self._at.rsplit("/", 1)[-1]
+
+    def is_file(self):
+        return self._at in self._entries
+
+    def is_dir(self):
+        return not self._at or any(k.startswith(self._at + "/")
+                                   for k in self._entries)
+
+    def read_text(self, encoding="utf-8"):
+        if not self.is_file():
+            raise KeyError(self._at)  # the py3.9 zipfile.Path behavior
+        return self._entries[self._at]
+
+    def iterdir(self):
+        if not self._at:
+            names = sorted({k.split("/", 1)[0] for k in self._entries})
+        else:
+            pfx = self._at + "/"
+            names = sorted({k[len(pfx):].split("/", 1)[0]
+                            for k in self._entries if k.startswith(pfx)})
+        return [FakeZipPath(self._entries,
+                            f"{self._at}/{n}" if self._at else n)
+                for n in names]
+
+    def __str__(self):
+        return f"<packed>/{self._at}"  # deliberately not a real path
+
+
 class TempWorkdirMixin(unittest.TestCase):
     """TestCase with a self.workdir (tmp) recreated per test."""
 

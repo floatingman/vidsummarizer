@@ -15,6 +15,8 @@ from ytpipeline import bench, prompts as P
 from ytpipeline.bench import (JUDGE_DIMS, aggregate, auto_checks, judge_summary,
                               load_benchset, overall_score, parse_scores,
                               render_report, run_benchmark, write_report)
+from tests.helpers import FakeZipPath
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent.parent
 FIXTURE_TRANSCRIPT = (REPO / "tests" / "fixtures" / "transcript" /
@@ -56,6 +58,47 @@ class TestBenchset(unittest.TestCase):
         self.assertEqual(bs["name"], "default")
         self.assertEqual([c["name"] for c in bs["cases"]],
                          ["sample-short", "howto-tls", "overview-history"])
+
+    def test_packed_set_loads_through_a_traversable(self):
+        # the benchset packed into the executable is reached through a
+        # Traversable whose str() is not a real path; load_benchset must
+        # still produce readable, real-file cases (regression guard for
+        # the 'transcript not found' crash from the zipapp)
+        benchdir = REPO / "benchmarks"
+        entries = {"set.json":
+                   (benchdir / "set.json").read_text(encoding="utf-8")}
+        for t in (benchdir / "transcripts").glob("*.txt"):
+            entries[f"transcripts/{t.name}"] = t.read_text(encoding="utf-8")
+        packed = FakeZipPath(entries)
+        with mock.patch.object(bench, "_packaged_set",
+                               return_value=packed), \
+                mock.patch.object(bench, "_workdir_set",
+                                  return_value=None):
+            bs = bench.load_benchset(None)
+        self.assertEqual(bs["name"], "default")
+        self.assertEqual([c["name"] for c in bs["cases"]],
+                         ["sample-short", "howto-tls", "overview-history"])
+        for c in bs["cases"]:
+            path = Path(c["path"])
+            self.assertTrue(path.is_file(), c["path"])
+            raw = path.read_text(encoding="utf-8")
+            self.assertNotIn("<packed>", str(path))  # a real file
+            self.assertIn(c["body"].splitlines()[0][:20], raw)
+
+    def test_packed_set_missing_transcript_dies_cleanly(self):
+        benchdir = REPO / "benchmarks"
+        entries = {"set.json": (benchdir / "set.json").read_text(
+            encoding="utf-8")}
+        packed = FakeZipPath(entries)  # no transcripts/ entries at all
+        with mock.patch.object(bench, "_packaged_set",
+                               return_value=packed), \
+                mock.patch.object(bench, "_workdir_set",
+                                  return_value=None):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
+                with self.assertRaises(SystemExit):
+                    bench.load_benchset(None)
+        self.assertIn("cannot read transcripts/sample-short.txt",
+                      err.getvalue())
 
     def test_cases_have_bodies_and_kinds(self):
         for c in load_benchset(None)["cases"]:

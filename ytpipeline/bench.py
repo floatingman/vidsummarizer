@@ -25,6 +25,7 @@ import importlib.resources
 import json
 import re
 import statistics
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -131,15 +132,39 @@ def load_benchset(explicit=None):
         if kind not in ("actionable", "overview"):
             die(f"{d / 'set.json'}: case {i}: kind must be 'actionable' or "
                 f"'overview', not {kind!r}")
-        path = Path(case["file"])
-        if not path.is_absolute():
-            path = Path(str(d)) / path
-        if not path.is_file():
-            die(f"{d / 'set.json'}: case {i}: transcript not found: {path}")
-        try:
-            raw = path.read_text(encoding="utf-8")
-        except OSError as e:
-            die(f"{d / 'set.json'}: case {i}: cannot read {path}: {e}")
+        ref = Path(case["file"])
+        if ref.is_absolute():
+            path = ref
+            if not path.is_file():
+                die(f"{d / 'set.json'}: case {i}: transcript not found: {path}")
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except OSError as e:
+                die(f"{d / 'set.json'}: case {i}: cannot read {path}: {e}")
+        elif isinstance(d, Path):
+            path = Path(str(d)) / ref
+            if not path.is_file():
+                die(f"{d / 'set.json'}: case {i}: transcript not found: {path}")
+            try:
+                raw = path.read_text(encoding="utf-8")
+            except OSError as e:
+                die(f"{d / 'set.json'}: case {i}: cannot read {path}: {e}")
+        else:
+            # the packed set inside the zipapp: d is a Traversable, so
+            # Path(str(d)) is not a real filesystem path. Read through
+            # the Traversable API, then materialize the transcript so
+            # the rest of the run (summarize_transcript) gets a real
+            # file it can open.
+            try:
+                raw = (d / ref.as_posix()).read_text(encoding="utf-8")
+            except (OSError, KeyError, ValueError) as e:
+                # KeyError: py3.9's zipfile.Path raises it for a missing
+                # entry instead of FileNotFoundError
+                die(f"{d / 'set.json'}: case {i}: cannot read "
+                    f"{case['file']}: {e}")
+            tmp = tempfile.mkdtemp(prefix="ytp-benchset-")
+            path = Path(tmp) / ref.name
+            path.write_text(raw, encoding="utf-8")
         meta, body = parse_transcript(raw)
         if not body:
             die(f"{d / 'set.json'}: case {i}: transcript is empty: {path}")

@@ -181,5 +181,50 @@ class TestNewVariantKeepsStyle(unittest.TestCase):
                     pattern="invalid prompt variant name")
 
 
+class TestPackedZipappTraversables(unittest.TestCase):
+    """The variants packed into the executable are reached through a
+    Traversable that is not a pathlib.Path: str() is no real path and
+    (py3.9) read_text() of a missing entry raises KeyError. Regression
+    guards for the py3.9 'prompts list' crash (active_name) and the
+    'prompts new' materialization crash (writable_prompts_dir)."""
+
+    def packed(self, with_active=False):
+        from tests.helpers import FakeZipPath
+        entries = {f.name: f.read_text(encoding="utf-8")
+                   for f in sorted(REPO_PROMPTS.glob("*.json"))}
+        if with_active:
+            entries["active.txt"] = "short\n"
+        return FakeZipPath(entries)
+
+    def test_active_name_defaults_when_pointer_missing(self):
+        # py3.9's zipfile.Path raises KeyError (not FileNotFoundError)
+        # for the missing active.txt entry
+        self.assertEqual(P.active_name(self.packed()), P.DEFAULT_VARIANT)
+
+    def test_active_name_reads_pointer_when_packed(self):
+        self.assertEqual(P.active_name(self.packed(with_active=True)),
+                         "short")
+
+    def test_writable_prompts_dir_materializes_from_packed(self):
+        tmp = tempfile.TemporaryDirectory(prefix="ytp-zipp-")
+        self.addCleanup(tmp.cleanup)
+        d = P.writable_prompts_dir(self.packed(), tmp.name)
+        self.assertEqual(d, Path(tmp.name) / "prompts")
+        for f in sorted(REPO_PROMPTS.glob("*.json")):
+            self.assertEqual((d / f.name).read_text(encoding="utf-8"),
+                             f.read_text(encoding="utf-8"),
+                             f"{f.name} not copied byte-identically")
+        self.assertEqual(sorted(p.name for p in d.iterdir()),
+                         sorted(f.name for f in REPO_PROMPTS.glob("*.json")))
+
+    def test_prompts_registry_works_against_packed_dir(self):
+        # list + load through the Traversable, like 'prompts list' and
+        # '--style' resolution do inside the executable
+        names = P.variant_names(self.packed())
+        self.assertIn("v1-baseline", names)
+        ps = P.load_variant(self.packed(), "short")
+        self.assertTrue(ps.is_style)
+
+
 if __name__ == "__main__":
     unittest.main()

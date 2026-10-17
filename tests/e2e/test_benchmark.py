@@ -176,5 +176,68 @@ class BenchmarkE2E(unittest.TestCase):
         self.assertIn("(active: short)", r.stdout)
 
 
+class TestZipappBenchmark(unittest.TestCase):
+    """The built executable must benchmark with the prompt variants AND
+    the benchmark set packed inside it: an empty workdir (no prompts/, no
+    benchmarks/) resolves both from the zipapp. Regression guards for the
+    packed-set 'transcript not found' crash and the prompts-materialization
+    NotADirectoryError crash from the executable."""
+
+    EXE = REPO / "dist" / "yt-pipeline"
+
+    def setUp(self):
+        if not self.EXE.exists():
+            self.skipTest("dist/yt-pipeline not built (run ./build.sh)")
+        import tempfile
+        from tests.helpers import FakeOllamaServer, fake_env
+        self.ollama = FakeOllamaServer()
+        self.addCleanup(self.ollama.stop)
+        self.ollama.responder = self.respond
+        self._tmp = tempfile.TemporaryDirectory(prefix="ytp-bzip-")
+        self.addCleanup(self._tmp.cleanup)
+        self.workdir = Path(self._tmp.name)
+        self.env = fake_env(self.workdir)
+
+    def respond(self, body):
+        user = body["messages"][-1]["content"]
+        if "Rate the SUMMARY" in user:
+            return JUDGE_JSON
+        return GOOD_ACTIONABLE if "certbot" in user else GOOD_OVERVIEW
+
+    def run_exe(self, *args, timeout=240):
+        import subprocess
+        import sys
+        return subprocess.run(
+            [sys.executable, str(self.EXE), *args,
+             "--workdir", str(self.workdir)],
+            env=self.env, capture_output=True, text=True, errors="replace",
+            timeout=timeout)
+
+    def test_benchmark_uses_the_packed_set_and_variants(self):
+        r = self.run_exe("benchmark", "--prompts", "v1-baseline",
+                         "--host", self.ollama.host, "--no-autostart")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        # the packed set inside the executable was used: the empty workdir
+        # has no benchmarks/ directory of its own
+        self.assertIn("benchset", r.stdout)
+        self.assertIn("3 cases", r.stdout)
+        results = self.workdir / "benchmarks" / "results"
+        runs = sorted(results.iterdir())
+        self.assertTrue(runs, "no benchmark report written")
+        report = (runs[-1] / "report.md").read_text(encoding="utf-8")
+        self.assertIn("## Comparison", report)
+        self.assertIn("v1-baseline", report)
+
+    def test_prompts_new_materializes_the_packed_variants(self):
+        r = self.run_exe("prompts", "new", "tighter")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        pdir = self.workdir / "prompts"
+        self.assertTrue((pdir / "tighter.json").exists(), r.stdout)
+        names = sorted(p.name for p in pdir.glob("*.json"))
+        self.assertEqual(names, ["actionable.json", "short.json",
+                                 "study-guide.json", "tighter.json",
+                                 "v1-baseline.json"])
+
+
 if __name__ == "__main__":
     unittest.main()
