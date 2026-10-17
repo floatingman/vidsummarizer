@@ -43,7 +43,7 @@ The asset is the executable itself, uncompressed (a single small file; no archiv
 
 ```bash
 # on the target machine (or download the 'yt-pipeline' asset in the browser):
-gh release download {{VERSION}} --repo floatingman/yt-pipeline     # needs gh, signed in
+gh release download v{{VERSION}} --repo floatingman/yt-pipeline     # needs gh, signed in (note the v: the tag is v<VERSION>)
 # or from the machine that has it: scp yt-pipeline user@host:~/yt-pipeline/
 
 chmod +x yt-pipeline          # once; it runs from any directory
