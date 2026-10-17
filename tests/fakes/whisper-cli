@@ -1,0 +1,41 @@
+#!/usr/bin/env python3
+"""Fake whisper-cli for yt-pipeline E2E tests (shadowed onto PATH by tests).
+
+Writes a canned whisper JSON result next to the "-of" base path, mirroring
+the tool's `outbase.with_suffix(".json")` naming.
+
+Env vars:
+  YT_FAKE_LOG                append one JSON line per invocation
+  YT_FAKE_FIXTURES           fixtures dir (canned whisper JSON)
+  YT_FAKE_WHISPER_JSON       override the canned whisper JSON file
+  YT_FAKE_WHISPER_NEEDS_WAV  if set: fail on non-.wav input, so the pipeline
+                             takes its ffmpeg 16kHz-WAV fallback path
+  YT_FAKE_WHISPER_FAIL       if set: always fail (stderr + exit 1)
+"""
+import json
+import os
+import sys
+from pathlib import Path
+
+argv = sys.argv[1:]
+
+log = os.environ.get("YT_FAKE_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"tool": "whisper-cli", "argv": argv}) + "\n")
+
+if os.environ.get("YT_FAKE_WHISPER_FAIL"):
+    print("whisper-cli: fake failure", file=sys.stderr)
+    sys.exit(1)
+
+inp = argv[argv.index("-f") + 1]
+if os.environ.get("YT_FAKE_WHISPER_NEEDS_WAV") and not inp.endswith(".wav"):
+    print("whisper-cli: error: cannot decode input (fake: needs wav)",
+          file=sys.stderr)
+    sys.exit(1)
+
+fix = Path(os.environ.get("YT_FAKE_FIXTURES", "tests/fixtures"))
+src = Path(os.environ.get("YT_FAKE_WHISPER_JSON") or fix / "whisper" / "sample.json")
+out = Path(argv[argv.index("-of") + 1]).with_suffix(".json")
+out.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+sys.exit(0)

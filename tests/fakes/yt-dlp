@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Fake yt-dlp for yt-pipeline E2E tests (shadowed onto PATH by tests).
+
+Recognizes exactly the invocation shapes yt-pipeline uses:
+
+  yt-dlp -J [--js-runtimes node] [extra...] URL   -> print canned metadata JSON
+  yt-dlp -q ... -o TEMPLATE ... URL               -> "download" the bundled
+                                                     sample mp3 to <dir>/<id>.mp3
+  yt-dlp --version                                 -> print a fake version
+
+Env vars (set by tests/helpers.py):
+  YT_FAKE_LOG          append one JSON line per invocation ({tool, argv})
+  YT_FAKE_FIXTURES     fixtures dir (metadata JSON + sample audio)
+  YT_FAKE_YTDLP_META   override metadata JSON file
+  YT_FAKE_AUDIO        override the audio file copied as the "download"
+  YT_FAKE_YTDLP_FAIL   if set: fail like a dead video (stderr + exit 1)
+  YT_FAKE_YTDLP_FAIL_IDS          comma list: fail every call for these ids
+  YT_FAKE_YTDLP_FAIL_DOWNLOAD_IDS comma list: fail only downloads for these ids
+"""
+import json
+import os
+import re
+import shutil
+import sys
+from pathlib import Path
+
+argv = sys.argv[1:]
+
+log = os.environ.get("YT_FAKE_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"tool": "yt-dlp", "argv": argv}) + "\n")
+
+
+def video_id():
+    last = argv[-1] if argv else ""
+    m = re.fullmatch(r"[A-Za-z0-9_-]{11}", last)
+    if m:
+        return m.group(0)
+    m = re.search(r"(?:v=|youtu\.be/|shorts/|live/|embed/)([A-Za-z0-9_-]{11})", last)
+    if m:
+        return m.group(1)
+    raise SystemExit(f"fake yt-dlp: no video id found in argv: {argv!r}")
+
+
+def _in_list(var):
+    ids = os.environ.get(var, "")
+    return vid in [x.strip() for x in ids.split(",") if x.strip()]
+
+
+vid = video_id()
+
+if os.environ.get("YT_FAKE_YTDLP_FAIL") or _in_list("YT_FAKE_YTDLP_FAIL_IDS"):
+    print(f"ERROR: [fake] video {vid} unavailable", file=sys.stderr)
+    sys.exit(1)
+
+if "--version" in argv:
+    print("2025.01.01-fake")
+    sys.exit(0)
+
+fix = Path(os.environ.get("YT_FAKE_FIXTURES", "tests/fixtures"))
+
+if "-J" in argv:
+    meta_file = os.environ.get("YT_FAKE_YTDLP_META") or fix / "meta" / "sample.json"
+    meta = json.loads(Path(meta_file).read_text(encoding="utf-8"))
+    meta["id"] = vid
+    print(json.dumps(meta))
+    sys.exit(0)
+
+# download mode: "-o <dir>/%(id)s.%(ext)s" ... URL
+if _in_list("YT_FAKE_YTDLP_FAIL_DOWNLOAD_IDS"):
+    print(f"ERROR: [fake] download of {vid} failed", file=sys.stderr)
+    sys.exit(1)
+tmpl = argv[argv.index("-o") + 1]
+out_dir = Path(tmpl).parent
+src = Path(os.environ.get("YT_FAKE_AUDIO") or fix / "audio" / "sample.mp3")
+dst = out_dir / (vid + ".mp3")
+shutil.copyfile(src, dst)
+sys.exit(0)

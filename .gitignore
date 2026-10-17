@@ -9,3 +9,6 @@ audio/
 transcripts/
 summaries/
 models/
+
+# test fixture must not be caught by the runtime-data rules above
+!tests/fixtures/audio/

@@ -346,12 +346,73 @@ yt-pipeline/
     summarize.py         Ollama stage (from yt-summarize)
     batch.py             worker pool: list of videos, overlapped, failures isolated
     pipeline.py          run/fetch/transcribe/doctor commands
+  tests/                 unit + E2E test suite: `make test` (see Testing)
   build.sh               builds dist/yt-pipeline (zipapp)
+  Makefile               test / build entry points
   README.md
 ```
 
 Run from the checkout without building: `python3 -m ytpipeline <command> ...`
 (same behavior; the workdir then defaults to the repo root).
+
+## Testing
+
+The test suite needs nothing but Python itself (stdlib `unittest`, like the
+tool). The default run is fast, offline and deterministic:
+
+```
+make test        # unit + E2E, a few seconds; no network, no models
+make test-unit   # unit tests only
+make test-e2e    # end-to-end tests only
+make test-real   # opt-in: REAL whisper-cli + local model on the bundled
+                 # speech fixture (no network)
+make test-live   # opt-in: a real 19-second YouTube video through the real
+                 # pipeline (network + model; ~10-30s)
+```
+
+- **Unit tests** (`tests/unit/`) cover the modules in isolation with every
+  external process stubbed: video-id and batch-list parsing, tagged
+  logging, the subprocess wrapper and tool detection, workdir resolution
+  (including the read-only fallback), paragraphing rules and the transcript
+  format, transcript parsing, chunking, markdown cleanup and note building,
+  the Ollama HTTP client (against an in-process fake server), the worker
+  pool's failure containment, and the CLI parser/dispatch.
+- **E2E tests** (`tests/e2e/`) run the real CLI (`python3 -m ytpipeline`)
+  as a subprocess through the whole flow. `tests/fakes/` is put first on
+  `PATH`, so yt-dlp, whisper-cli, ffmpeg and ollama are stubs serving the
+  fixtures, and an in-process fake Ollama HTTP server answers the summarize
+  stage. Each run gets its own temporary workdir (with a dummy whisper model
+  seeded, so nothing downloads); covered: fetch caching, transcribe
+  (timestamps, wav fallback, audio retention), batch lists/files, dedup,
+  failure isolation and exit codes, summarize (by id/url/file, `--all`
+  skip logic, over-limit rewrite, language override) and the full `run`
+  pipeline. If `dist/yt-pipeline` exists, one extra check runs the built
+  executable too.
+
+### Fixtures (`tests/fixtures/`)
+
+| File | What it is |
+|---|---|
+| `audio/sample.mp3` | 7 seconds of real synthesized speech ("Hello. This is a short test recording for the yt pipeline test suite. The quick brown fox..."); every fake "download" serves this file, and `make test-real` transcribes it for real |
+| `meta/sample.json` | canned `yt-dlp -J` metadata returned by the fake yt-dlp |
+| `whisper/sample.json` | canned whisper-cli JSON output (two paragraphs, separated by a 1.7s silence gap) |
+| `transcript/sample.txt` | a finished transcript (metadata header + body) for the summarize stage |
+
+### Adding a regression test
+
+When a bug is found:
+
+1. **Reproduce it in the smallest failing test.** Pure logic bugs usually
+   belong in `tests/unit/` against a single function; bugs in CLI behavior,
+   exit codes, file layout or how stages interact belong in `tests/e2e/`,
+   driven through the real executable with the fakes.
+2. **Name it after the symptom** (e.g. `test_transcribe_keeps_audio`), keep
+   arrange/act/assert tight, and add or reuse fixtures under
+   `tests/fixtures/` instead of reaching for the network. If the fakes must
+   misbehave to trigger the bug, extend the env-var controls documented in
+   `tests/fakes/yt-dlp` / `whisper-cli` (e.g. `YT_FAKE_YTDLP_FAIL_IDS`).
+3. **Fix the code, then `make test`.** The suite must be green before and
+   after; the test doubles as the documentation of the bug.
 
 ## Troubleshooting
 

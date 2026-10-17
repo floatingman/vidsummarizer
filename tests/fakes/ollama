@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Fake ollama CLI for yt-pipeline E2E tests (shadowed onto PATH by tests).
+
+Only `ollama --version` is exercised (via doctor); the actual LLM traffic
+goes over HTTP to the in-process FakeOllamaServer from tests/helpers.py.
+"""
+import json
+import os
+
+log = os.environ.get("YT_FAKE_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"tool": "ollama", "argv": os.sys.argv[1:]}) + "\n")
+
+print("ollama version is 0.0.0-fake")
