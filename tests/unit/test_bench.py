@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.bench: the benchmark set, automatic quality
+"""Unit tests for vidsummarizer.bench: the benchmark set, automatic quality
 checks, the LLM-judge answer parsing, scoring/aggregation, the report, and
 a full benchmark run against the in-process fake Ollama server."""
 
@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 from tests.helpers import FakeOllamaServer, ns
 
-from ytpipeline import bench, prompts as P
-from ytpipeline.bench import (JUDGE_DIMS, aggregate, auto_checks, judge_summary,
+from vidsummarizer import bench, prompts as P
+from vidsummarizer.bench import (JUDGE_DIMS, aggregate, auto_checks, judge_summary,
                               load_benchset, overall_score, parse_scores,
                               render_report, run_benchmark, write_report)
 from tests.helpers import FakeZipPath
@@ -328,7 +328,7 @@ class TestAggregate(unittest.TestCase):
         self.assertIn("| hi ", report)
         self.assertIn("| lo **(active)**", report)
         self.assertIn("Winner: `hi`", report)
-        self.assertIn("yt-pipeline prompts promote hi", report)
+        self.assertIn("vidsummarizer prompts promote hi", report)
 
     def test_report_notes_when_active_already_wins(self):
         results = [result("lo", SCORES_HI), result("hi", SCORES_LO)]
@@ -444,7 +444,7 @@ class TestRunBenchmark(unittest.TestCase):
         self.assertIn("| tight", out)
         self.assertIn("| plain **(active)**", out)
         self.assertIn("Winner: `tight`", out)
-        self.assertIn("yt-pipeline prompts promote tight", out)
+        self.assertIn("vidsummarizer prompts promote tight", out)
         results_dir = self.tmp / "results"
         self.assertTrue((results_dir / "report.md").exists())
         data = json.loads((results_dir / "results.json").read_text())
@@ -509,7 +509,7 @@ class TestQualityGuard(unittest.TestCase):
     LLM-judged half is `make bench-real`."""
 
     def test_active_variant_passes_auto_checks_on_every_case(self):
-        from ytpipeline.summarize import summarize_transcript
+        from vidsummarizer.summarize import summarize_transcript
         bs = load_benchset(None)
         pset = P.load_active(P.resolve_prompts_dir(None, None))
         opts = ns(out=None, model="stub", host="x", timeout=30,

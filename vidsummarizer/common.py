@@ -1,4 +1,4 @@
-"""Shared helpers for yt-pipeline: logging, subprocess wrapper, video-id
+"""Shared helpers for vidsummarizer: logging, subprocess wrapper, video-id
 parsing, external-tool detection, and work-directory resolution."""
 
 import os
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import VERSION
 
-PROG = "yt-pipeline"
+PROG = "vidsummarizer"
 VERSION_LINE = f"{PROG} {VERSION}"
 
 # External tools that cannot be bundled into the executable.
@@ -237,7 +237,7 @@ def base_dir():
 
 def fallback_data_dir():
     xdg = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return Path(xdg).expanduser() / "yt-pipeline"
+    return Path(xdg).expanduser() / "vidsummarizer"
 
 
 def resolve_workdir(explicit=None):
@@ -245,10 +245,10 @@ def resolve_workdir(explicit=None):
 
     The old tools kept audio/, transcripts/, summaries/ and models/ next to
     their script in the project checkout; the executable's own directory is
-    the direct equivalent, so a copied yt-pipeline file plus its data folder
+    the direct equivalent, so a copied vidsummarizer file plus its data folder
     behaves exactly like the old checkouts. If that directory is read-only
     (e.g. the binary was installed into /usr/local/bin), fall back to
-    ~/.local/share/yt-pipeline so the tool still works anywhere.
+    ~/.local/share/vidsummarizer so the tool still works anywhere.
     """
     if explicit:
         return Path(explicit).expanduser()

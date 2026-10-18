@@ -221,7 +221,7 @@ def build_output(meta, video_id, language, model, paragraphs):
         ("url", watch_url(video_id)),
         ("language", language),
         ("model", model.name),
-        ("tool", f"yt-pipeline {VERSION} (local whisper.cpp)"),
+        ("tool", f"vidsummarizer {VERSION} (local whisper.cpp)"),
     ]
     if len(header[2][1]) == 8:  # YYYYMMDD -> YYYY-MM-DD
         d = header[2][1]

@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.batch: the worker pool and its failure
+"""Unit tests for vidsummarizer.batch: the worker pool and its failure
 containment."""
 
 import threading
@@ -7,7 +7,7 @@ import unittest
 
 from tests.helpers import stderr_of
 
-from ytpipeline.batch import _fmt_took, _guarded, run_batch
+from vidsummarizer.batch import _fmt_took, _guarded, run_batch
 
 
 class TestGuarded(unittest.TestCase):
@@ -35,7 +35,7 @@ class TestGuarded(unittest.TestCase):
             _guarded("vid", boom, True)
 
     def test_log_tag_set_during_run_and_cleared_after(self):
-        from ytpipeline.common import _log_tag
+        from vidsummarizer.common import _log_tag
         seen = {}
 
         def probe(v):
@@ -45,7 +45,7 @@ class TestGuarded(unittest.TestCase):
         self.assertIsNone(getattr(_log_tag, "value", None))
 
     def test_no_tag_when_single_video(self):
-        from ytpipeline.common import _log_tag
+        from vidsummarizer.common import _log_tag
         seen = {}
 
         def probe(v):

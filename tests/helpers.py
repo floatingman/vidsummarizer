@@ -1,10 +1,10 @@
-"""Shared helpers for the yt-pipeline tests.
+"""Shared helpers for the vidsummarizer tests.
 
 - path constants (repo root, fixtures, fake-tool bin dir)
 - stderr-capturing assert helpers for code that calls die()/log()/warn()
 - FakeOllamaServer: an in-process HTTP server speaking the small part of the
   Ollama API the pipeline uses (version/tags/chat), for unit and E2E tests
-- subprocess helpers to run the real CLI (`python3 -m ytpipeline`) with the
+- subprocess helpers to run the real CLI (`python3 -m vidsummarizer`) with the
   fake yt-dlp/whisper-cli/ffmpeg/ollama binaries shadowing PATH
 """
 
@@ -136,7 +136,7 @@ class _FakeOllamaHandler(BaseHTTPRequestHandler):
 
 
 class FakeOllamaServer:
-    """In-process HTTP server that answers the Ollama API calls yt-pipeline
+    """In-process HTTP server that answers the Ollama API calls vidsummarizer
     makes. Test customization:
 
       .models           model names reported by /api/tags
@@ -244,9 +244,9 @@ def tool_log(workdir):
 
 
 def run_cli(args, env, timeout=180, input=None):
-    """Run `python3 -m ytpipeline ARGS` from the repo root."""
+    """Run `python3 -m vidsummarizer ARGS` from the repo root."""
     return subprocess.run(
-        [sys.executable, "-m", "ytpipeline", *args],
+        [sys.executable, "-m", "vidsummarizer", *args],
         cwd=str(REPO), env=env, capture_output=True, text=True,
         errors="replace", timeout=timeout, input=input)
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Fake yt-dlp for yt-pipeline E2E tests (shadowed onto PATH by tests).
+"""Fake yt-dlp for vidsummarizer E2E tests (shadowed onto PATH by tests).
 
-Recognizes exactly the invocation shapes yt-pipeline uses:
+Recognizes exactly the invocation shapes vidsummarizer uses:
 
   yt-dlp -J [--js-runtimes node] [extra...] URL   -> print canned metadata JSON
   yt-dlp -q ... -o TEMPLATE ... URL               -> "download" the bundled

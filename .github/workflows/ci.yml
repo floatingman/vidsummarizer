@@ -1,4 +1,4 @@
-# Quality gate for yt-pipeline: run on every pull request, and (via
+# Quality gate for vidsummarizer: run on every pull request, and (via
 # workflow_call) before every automated release.
 #
 # Everything here is offline and deterministic: `make test` stubs all
@@ -33,13 +33,13 @@ jobs:
 
       - name: Built executable reports its version
         run: |
-          VERSION=$(python3 -c "from ytpipeline import VERSION; print(VERSION)")
-          test "$(./dist/yt-pipeline --version)" = "yt-pipeline $VERSION"
+          VERSION=$(python3 -c "from vidsummarizer import VERSION; print(VERSION)")
+          test "$(./dist/vidsummarizer --version)" = "vidsummarizer $VERSION"
 
       - name: doctor detects a bare machine (nothing installed)
         run: |
           set +e
-          ./dist/yt-pipeline doctor > doctor.txt 2>&1
+          ./dist/vidsummarizer doctor > doctor.txt 2>&1
           rc=$?
           set -e
           cat doctor.txt

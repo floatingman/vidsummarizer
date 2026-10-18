@@ -1,7 +1,7 @@
 {
   "name": "v1-baseline",
   "version": 1,
-  "description": "The original prompts of yt-summarize 1.0.0 / yt-pipeline 2.x: actionable-steps-or-overview summary, 500-word cap, map-reduce over long transcripts. Baseline for comparisons.",
+  "description": "The original prompts of yt-summarize 1.0.0 / vidsummarizer 2.x: actionable-steps-or-overview summary, 500-word cap, map-reduce over long transcripts. Baseline for comparisons.",
   "created": "2026-02-27",
   "prompts": {
     "system": "You are a careful, precise summarizer for a personal note-taking app. You only state facts found in the transcript; you never invent details, numbers, names or claims. You write clean, compact markdown.",

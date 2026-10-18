@@ -1,8 +1,8 @@
 # Automated release: every push to master runs the full test gate, then
-# publishes a GitHub Release for the version in ytpipeline/__init__.py if
+# publishes a GitHub Release for the version in vidsummarizer/__init__.py if
 # that version has not been released yet.
 #
-# Normal flow: bump VERSION in ytpipeline/__init__.py, commit, push master.
+# Normal flow: bump VERSION in vidsummarizer/__init__.py, commit, push master.
 # The gate (tests + build, via ci.yml) must be green, or nothing releases.
 # A push without a version bump is a no-op beyond the tests.
 name: release
@@ -51,15 +51,15 @@ jobs:
             echo "== releases only publish from master (got $GITHUB_REF); skipping."
             exit 0
           fi
-          VERSION=$(python3 -c "from ytpipeline import VERSION; print(VERSION)")
+          VERSION=$(python3 -c "from vidsummarizer import VERSION; print(VERSION)")
           TAG="v$VERSION"
-          echo "== yt-pipeline $VERSION -> $TAG"
+          echo "== vidsummarizer $VERSION -> $TAG"
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "== $TAG is already released; nothing to do."
             exit 0
           fi
 
-          SHA256=$(sha256sum dist/yt-pipeline | cut -d' ' -f1)
+          SHA256=$(sha256sum dist/vidsummarizer | cut -d' ' -f1)
           WORK=$(mktemp -d)
           sed -e "s/{{VERSION}}/$VERSION/g" -e "s|{{SHA256}}|$SHA256|g" \
               .github/release-notes-template.md > "$WORK/notes.md"
@@ -74,9 +74,9 @@ jobs:
               "$GITHUB_REPOSITORY" "$PREV" "$TAG" >> "$WORK/notes.md"
           fi
 
-          gh release create "$TAG" dist/yt-pipeline \
+          gh release create "$TAG" dist/vidsummarizer \
             -R "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
-            --title "yt-pipeline $VERSION" \
+            --title "vidsummarizer $VERSION" \
             --notes-file "$WORK/notes.md"
-          echo "== released $TAG (asset: yt-pipeline, sha256 $SHA256)"
+          echo "== released $TAG (asset: vidsummarizer, sha256 $SHA256)"

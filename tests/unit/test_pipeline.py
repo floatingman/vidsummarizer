@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.pipeline: thread resolution, batch option
+"""Unit tests for vidsummarizer.pipeline: thread resolution, batch option
 plumbing and the command implementations with their collaborators stubbed."""
 
 import unittest
@@ -7,7 +7,7 @@ from unittest import mock
 
 from tests.helpers import assert_dies, ns
 
-from ytpipeline import cli, pipeline
+from vidsummarizer import cli, pipeline
 
 VID = "dQw4w9WgXcQ"
 VID2 = "jNQXAC9IVRw"
@@ -66,7 +66,7 @@ class TestCmdFetch(CleanEnvMixin):
     def test_single_video(self):
         args = parse(["fetch", VID, "-j", "1",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.fetch_video_audio",
+        with mock.patch("vidsummarizer.pipeline.fetch_video_audio",
                         return_value=({"title": "T"}, self.mp3)) as fva:
             rc = pipeline.cmd_fetch(args)
         self.assertEqual(rc, 0)
@@ -76,8 +76,8 @@ class TestCmdFetch(CleanEnvMixin):
     def test_batch_uses_pool(self):
         args = parse(["fetch", f"{VID},{VID2}", "-j", "2",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.require_tools") as rt, \
-             mock.patch("ytpipeline.pipeline.run_batch",
+        with mock.patch("vidsummarizer.pipeline.require_tools") as rt, \
+             mock.patch("vidsummarizer.pipeline.run_batch",
                         return_value=({}, [])) as rb:
             rc = pipeline.cmd_fetch(args)
         self.assertEqual(rc, 0)
@@ -101,7 +101,7 @@ class TestCmdTranscribe(CleanEnvMixin):
     def test_single_video(self):
         args = parse(["transcribe", VID, "-j", "1",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.transcribe_video",
+        with mock.patch("vidsummarizer.pipeline.transcribe_video",
                         return_value=self.transcript) as tv:
             rc = pipeline.cmd_transcribe(args)
         self.assertEqual(rc, 0)
@@ -113,7 +113,7 @@ class TestCmdTranscribe(CleanEnvMixin):
     def test_single_video_with_out(self):
         args = parse(["transcribe", VID, "-o", "custom.txt", "-j", "1",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.transcribe_video",
+        with mock.patch("vidsummarizer.pipeline.transcribe_video",
                         return_value=Path("custom.txt")) as tv:
             pipeline.cmd_transcribe(args)
         self.assertEqual(tv.call_args[0][0].out, "custom.txt")
@@ -121,8 +121,8 @@ class TestCmdTranscribe(CleanEnvMixin):
     def test_out_with_several_videos_dies(self):
         args = parse(["transcribe", f"{VID},{VID2}", "-o", "x.txt",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.require_tools"), \
-                mock.patch("ytpipeline.pipeline.ensure_model"):
+        with mock.patch("vidsummarizer.pipeline.require_tools"), \
+                mock.patch("vidsummarizer.pipeline.ensure_model"):
             assert_dies(self, lambda: pipeline.cmd_transcribe(args),
                         pattern="drop it for batch runs")
 
@@ -130,9 +130,9 @@ class TestCmdTranscribe(CleanEnvMixin):
         args = parse(["transcribe", f"{VID},{VID2}", "-j", "2",
                       "--workdir", str(self.workdir)])
         model = self.workdir / "models" / "ggml-small.bin"
-        with mock.patch("ytpipeline.pipeline.require_tools") as rt, \
-             mock.patch("ytpipeline.pipeline.ensure_model") as em, \
-             mock.patch("ytpipeline.pipeline.run_batch",
+        with mock.patch("vidsummarizer.pipeline.require_tools") as rt, \
+             mock.patch("vidsummarizer.pipeline.ensure_model") as em, \
+             mock.patch("vidsummarizer.pipeline.run_batch",
                         return_value=({}, [])) as rb:
             rc = pipeline.cmd_transcribe(args)
         self.assertEqual(rc, 0)
@@ -140,7 +140,7 @@ class TestCmdTranscribe(CleanEnvMixin):
         em.assert_called_once()
         fn = rb.call_args[0][1]
         # running one worker through the stubbed transcribe shows thread split
-        with mock.patch("ytpipeline.pipeline.transcribe_video",
+        with mock.patch("vidsummarizer.pipeline.transcribe_video",
                         return_value=self.transcript) as tv:
             fn(VID)
         self.assertEqual(tv.call_args[0][0].threads, 4)  # 8 // 2 jobs
@@ -148,9 +148,9 @@ class TestCmdTranscribe(CleanEnvMixin):
     def test_batch_failure_gives_nonzero_exit(self):
         args = parse(["transcribe", f"{VID},{VID2}", "-j", "2",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.require_tools"), \
-             mock.patch("ytpipeline.pipeline.ensure_model"), \
-             mock.patch("ytpipeline.pipeline.run_batch",
+        with mock.patch("vidsummarizer.pipeline.require_tools"), \
+             mock.patch("vidsummarizer.pipeline.ensure_model"), \
+             mock.patch("vidsummarizer.pipeline.run_batch",
                         return_value=({}, [(VID, RuntimeError("x"))])):
             rc = pipeline.cmd_transcribe(args)
         self.assertEqual(rc, 1)
@@ -169,9 +169,9 @@ class TestCmdRun(CleanEnvMixin):
 
     def test_single_video_chains_transcribe_then_summarize(self):
         args = parse(["run", VID, "-j", "1", "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.transcribe_video",
+        with mock.patch("vidsummarizer.pipeline.transcribe_video",
                         return_value=self.transcript) as tv, \
-             mock.patch("ytpipeline.pipeline.summarize_targets",
+             mock.patch("vidsummarizer.pipeline.summarize_targets",
                         return_value=0) as st:
             rc = pipeline.cmd_run(args)
         self.assertEqual(rc, 0)
@@ -185,9 +185,9 @@ class TestCmdRun(CleanEnvMixin):
 
     def test_single_video_summarize_failure_propagates(self):
         args = parse(["run", VID, "-j", "1", "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.transcribe_video",
+        with mock.patch("vidsummarizer.pipeline.transcribe_video",
                         return_value=self.transcript), \
-             mock.patch("ytpipeline.pipeline.summarize_targets",
+             mock.patch("vidsummarizer.pipeline.summarize_targets",
                         return_value=1):
             rc = pipeline.cmd_run(args)
         self.assertEqual(rc, 1)
@@ -195,10 +195,10 @@ class TestCmdRun(CleanEnvMixin):
     def test_batch_preflights_ollama_once(self):
         args = parse(["run", f"{VID},{VID2}", "-j", "2",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.require_tools"), \
-             mock.patch("ytpipeline.pipeline.ensure_model"), \
-             mock.patch("ytpipeline.pipeline.Ollama") as ollama_cls, \
-             mock.patch("ytpipeline.pipeline.run_batch",
+        with mock.patch("vidsummarizer.pipeline.require_tools"), \
+             mock.patch("vidsummarizer.pipeline.ensure_model"), \
+             mock.patch("vidsummarizer.pipeline.Ollama") as ollama_cls, \
+             mock.patch("vidsummarizer.pipeline.run_batch",
                         return_value=({}, [])) as rb:
             rc = pipeline.cmd_run(args)
         self.assertEqual(rc, 0)
@@ -209,10 +209,10 @@ class TestCmdRun(CleanEnvMixin):
     def test_batch_soft_failures_count(self):
         args = parse(["run", f"{VID},{VID2}", "-j", "2",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.require_tools"), \
-             mock.patch("ytpipeline.pipeline.ensure_model"), \
-             mock.patch("ytpipeline.pipeline.Ollama"), \
-             mock.patch("ytpipeline.pipeline.run_batch",
+        with mock.patch("vidsummarizer.pipeline.require_tools"), \
+             mock.patch("vidsummarizer.pipeline.ensure_model"), \
+             mock.patch("vidsummarizer.pipeline.Ollama"), \
+             mock.patch("vidsummarizer.pipeline.run_batch",
                         return_value=({VID: 1, VID2: 0}, [])):
             rc = pipeline.cmd_run(args)
         self.assertEqual(rc, 1)
@@ -220,10 +220,10 @@ class TestCmdRun(CleanEnvMixin):
     def test_stdout_with_several_videos_forces_serial(self):
         args = parse(["run", f"{VID},{VID2}", "--stdout",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.require_tools"), \
-             mock.patch("ytpipeline.pipeline.ensure_model"), \
-             mock.patch("ytpipeline.pipeline.Ollama"), \
-             mock.patch("ytpipeline.pipeline.run_batch",
+        with mock.patch("vidsummarizer.pipeline.require_tools"), \
+             mock.patch("vidsummarizer.pipeline.ensure_model"), \
+             mock.patch("vidsummarizer.pipeline.Ollama"), \
+             mock.patch("vidsummarizer.pipeline.run_batch",
                         return_value=({}, [])) as rb:
             pipeline.cmd_run(args)
         self.assertEqual(rb.call_args[0][2], 1)  # jobs=1
@@ -231,8 +231,8 @@ class TestCmdRun(CleanEnvMixin):
     def test_transcript_out_with_several_videos_dies(self):
         args = parse(["run", f"{VID},{VID2}", "--transcript-out", "x.txt",
                       "--workdir", str(self.workdir)])
-        with mock.patch("ytpipeline.pipeline.require_tools"), \
-                mock.patch("ytpipeline.pipeline.ensure_model"):
+        with mock.patch("vidsummarizer.pipeline.require_tools"), \
+                mock.patch("vidsummarizer.pipeline.ensure_model"):
             assert_dies(self, lambda: pipeline.cmd_run(args),
                         pattern="drop it for batch runs")
 

@@ -1,13 +1,13 @@
 """Command-line interface: subcommand parsing and dispatch.
 
-    yt-pipeline <url>[,<url>...]       full pipeline (same as 'run')
-    yt-pipeline run <urls/ids>...      mp3 -> transcript -> summary
-    yt-pipeline fetch <urls/ids>...    mp3 only
-    yt-pipeline transcribe <urls/ids>  transcript only (the old yt-transcribe)
-    yt-pipeline summarize <id|url|file|'--all'>   (the old yt-summarize)
-    yt-pipeline benchmark [variants]   score prompt variants, compare, report
-    yt-pipeline prompts <list|show|new|promote>  manage prompt variants
-    yt-pipeline doctor                 check this machine for missing tools
+    vidsummarizer <url>[,<url>...]       full pipeline (same as 'run')
+    vidsummarizer run <urls/ids>...      mp3 -> transcript -> summary
+    vidsummarizer fetch <urls/ids>...    mp3 only
+    vidsummarizer transcribe <urls/ids>  transcript only (the old yt-transcribe)
+    vidsummarizer summarize <id|url|file|'--all'>   (the old yt-summarize)
+    vidsummarizer benchmark [variants]   score prompt variants, compare, report
+    vidsummarizer prompts <list|show|new|promote>  manage prompt variants
+    vidsummarizer doctor                 check this machine for missing tools
 
 Every video-taking command accepts several videos at once: as several
 arguments, comma-separated, from a --batch FILE (one per line), or any mix.
@@ -25,19 +25,19 @@ COMMANDS = ("run", "fetch", "transcribe", "summarize", "benchmark",
             "prompts", "doctor")
 
 EPILOG = """examples:
-  yt-pipeline https://youtu.be/iCvmsMzlF7o           full pipeline in one command
-  yt-pipeline run iCvmsMzlF7o --timestamps          same, explicit 'run'
-  yt-pipeline url1,url2,jNQXAC9IVRw                 several videos, comma-separated
-  yt-pipeline run --batch videos.txt -j 3           ...or one per line from a file
-  yt-pipeline fetch jNQXAC9IVRw                      only download the mp3
-  yt-pipeline transcribe jNQXAC9IVRw --lang de       only the transcript
-  yt-pipeline summarize iCvmsMzlF7o                  only the summary
-  yt-pipeline summarize --all --out ~/vault/notes    summarize every transcript
-  yt-pipeline summarize iCvmsMzlF7o --style short   same video, other style
-  yt-pipeline benchmark                               score every prompt variant
-  yt-pipeline prompts new tighter                     add a prompt variant
-  yt-pipeline prompts promote tighter                 make a variant the default
-  yt-pipeline doctor                                 check required tools
+  vidsummarizer https://youtu.be/iCvmsMzlF7o           full pipeline in one command
+  vidsummarizer run iCvmsMzlF7o --timestamps          same, explicit 'run'
+  vidsummarizer url1,url2,jNQXAC9IVRw                 several videos, comma-separated
+  vidsummarizer run --batch videos.txt -j 3           ...or one per line from a file
+  vidsummarizer fetch jNQXAC9IVRw                      only download the mp3
+  vidsummarizer transcribe jNQXAC9IVRw --lang de       only the transcript
+  vidsummarizer summarize iCvmsMzlF7o                  only the summary
+  vidsummarizer summarize --all --out ~/vault/notes    summarize every transcript
+  vidsummarizer summarize iCvmsMzlF7o --style short   same video, other style
+  vidsummarizer benchmark                               score every prompt variant
+  vidsummarizer prompts new tighter                     add a prompt variant
+  vidsummarizer prompts promote tighter                 make a variant the default
+  vidsummarizer doctor                                 check required tools
 
 data (audio/, transcripts/, summaries/, models/) lives next to the
 executable by default; change it with --workdir DIR or $YT_WORKDIR."""
@@ -221,8 +221,8 @@ def build_parser():
                     "videos (comma-separated, several arguments and/or "
                     "--batch FILE), processed with a small worker pool.",
         epilog="examples:\n"
-               "  yt-pipeline run url1,url2,url3 -j 2\n"
-               "  yt-pipeline run --batch videos.txt --timestamps\n\n"
+               "  vidsummarizer run url1,url2,url3 -j 2\n"
+               "  vidsummarizer run --batch videos.txt --timestamps\n\n"
                "Calling the executable with just a URL or video id "
                "(no subcommand) does the same thing.",
         formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -256,10 +256,10 @@ def build_parser():
         description="Summarize transcript(s) with the local LLM (Ollama) "
                     "into Obsidian-ready markdown notes.",
         epilog="examples:\n"
-               "  yt-pipeline summarize iCvmsMzlF7o\n"
-               "  yt-pipeline summarize --all\n"
-               "  yt-pipeline summarize iCvmsMzlF7o --style study-guide\n"
-               "  yt-pipeline summarize ~/notes/transcript.txt "
+               "  vidsummarizer summarize iCvmsMzlF7o\n"
+               "  vidsummarizer summarize --all\n"
+               "  vidsummarizer summarize iCvmsMzlF7o --style study-guide\n"
+               "  vidsummarizer summarize ~/notes/transcript.txt "
                "--out ~/vault/Video\\ notes\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p_sum.add_argument("targets", nargs="*",
@@ -285,12 +285,12 @@ def build_parser():
                     "rating faithfulness, actionability and clarity) and "
                     "write a comparison report. The winning variant is "
                     "only *suggested*; make it the default with "
-                    "'yt-pipeline prompts promote'.",
+                    "'vidsummarizer prompts promote'.",
         epilog="examples:\n"
-               "  yt-pipeline benchmark\n"
-               "  yt-pipeline benchmark --prompts v1-baseline,tighter\n"
-               "  yt-pipeline benchmark --judge-model llama3.2\n"
-               "  yt-pipeline benchmark --min-overall 3.5   # quality gate\n",
+               "  vidsummarizer benchmark\n"
+               "  vidsummarizer benchmark --prompts v1-baseline,tighter\n"
+               "  vidsummarizer benchmark --judge-model llama3.2\n"
+               "  vidsummarizer benchmark --min-overall 3.5   # quality gate\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p_bm.add_argument("--prompts", metavar="A,B", default=None,
                       help="prompt variants to compare, comma-separated "
@@ -347,10 +347,10 @@ def build_parser():
                     "This command lists, shows, creates and promotes "
                     "them; 'benchmark' compares them.",
         epilog="examples:\n"
-               "  yt-pipeline prompts list\n"
-               "  yt-pipeline prompts show v1-baseline\n"
-               "  yt-pipeline prompts new tighter --from v1-baseline\n"
-               "  yt-pipeline prompts promote tighter\n",
+               "  vidsummarizer prompts list\n"
+               "  vidsummarizer prompts show v1-baseline\n"
+               "  vidsummarizer prompts new tighter --from v1-baseline\n"
+               "  vidsummarizer prompts promote tighter\n",
         formatter_class=argparse.RawDescriptionHelpFormatter)
     p_pr.add_argument("action", nargs="?", default="list",
                       choices=("list", "show", "new", "promote"),
@@ -465,7 +465,7 @@ def cmd_prompts(args):
         for v in variants:
             mark = "  [active]" if v.name == active else ""
             print(f"  {v.name:<24} v{v.version:<3} {v.description}{mark}")
-        print("benchmark them with: yt-pipeline benchmark")
+        print("benchmark them with: vidsummarizer benchmark")
         return 0
 
     if not args.name:
@@ -486,7 +486,7 @@ def cmd_prompts(args):
         path = P.new_variant(read_dir, write_dir, args.name, src)
         from .common import log
         log(f"created {path} (copy of {src})")
-        print(f"created {path}\nedit it, then: yt-pipeline benchmark "
+        print(f"created {path}\nedit it, then: vidsummarizer benchmark "
               f"--prompts {args.name}")
         return 0
 
@@ -514,8 +514,8 @@ def cmd_prompts(args):
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
-    # 'yt-pipeline <url>' means 'yt-pipeline run <url>'; the same shorthand
-    # works when the batch options lead: 'yt-pipeline --batch f.txt -j 3'.
+    # 'vidsummarizer <url>' means 'vidsummarizer run <url>'; the same shorthand
+    # works when the batch options lead: 'vidsummarizer --batch f.txt -j 3'.
     if argv and argv[0] not in COMMANDS:
         first = argv[0].split("=", 1)[0]
         if not argv[0].startswith("-") or first in ("-b", "--batch", "-j", "--jobs"):

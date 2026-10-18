@@ -6,7 +6,7 @@ video_id: FxTureVid01
 url: https://www.youtube.com/watch?v=FxTureVid01
 language: en
 model: ggml-small.bin
-tool: yt-pipeline 2.1.0 (local whisper.cpp)
+tool: vidsummarizer 2.1.0 (local whisper.cpp)
 
 Hello. This is a short test recording for the yt pipeline test suite.
 

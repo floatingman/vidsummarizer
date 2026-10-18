@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.transcribe (yt-dlp + whisper.cpp stage).
+"""Unit tests for vidsummarizer.transcribe (yt-dlp + whisper.cpp stage).
 
 External processes (yt-dlp, whisper-cli, ffmpeg, model download) are stubbed
 with mocks; the parsing/formatting logic is tested against fixture-shaped
@@ -12,8 +12,8 @@ from unittest import mock
 
 from tests.helpers import assert_dies, ns, stderr_of
 
-from ytpipeline import transcribe
-from ytpipeline.transcribe import (build_output, build_paragraphs,
+from vidsummarizer import transcribe
+from vidsummarizer.transcribe import (build_output, build_paragraphs,
                                    normalize_segments)
 
 VID = "dQw4w9WgXcQ"
@@ -45,7 +45,7 @@ class TestFetchMetadata(unittest.TestCase):
     def test_parses_json_and_passes_url(self):
         proc = ns(returncode=0, stdout=json.dumps({"id": VID, "title": "T"}),
                   stderr="")
-        with mock.patch("ytpipeline.transcribe.run", return_value=proc) as m:
+        with mock.patch("vidsummarizer.transcribe.run", return_value=proc) as m:
             meta = transcribe.fetch_metadata(VID, [])
         self.assertEqual(meta["id"], VID)
         cmd = m.call_args[0][0]
@@ -55,14 +55,14 @@ class TestFetchMetadata(unittest.TestCase):
 
     def test_extra_args_included(self):
         proc = ns(returncode=0, stdout="{}", stderr="")
-        with mock.patch("ytpipeline.transcribe.run", return_value=proc) as m:
+        with mock.patch("vidsummarizer.transcribe.run", return_value=proc) as m:
             transcribe.fetch_metadata(VID, ["--cookies", "c.txt"])
         cmd = m.call_args[0][0]
         self.assertIn("--cookies", cmd)
 
     def test_bad_json_dies(self):
         proc = ns(returncode=0, stdout="not json", stderr="")
-        with mock.patch("ytpipeline.transcribe.run", return_value=proc):
+        with mock.patch("vidsummarizer.transcribe.run", return_value=proc):
             assert_dies(self, lambda: transcribe.fetch_metadata(VID, []),
                         pattern="could not be parsed as JSON")
 
@@ -86,13 +86,13 @@ class TestDownloadAudio(unittest.TestCase):
 
     def test_existing_mp3_is_reused_without_ytdlp(self):
         self.mp3.write_bytes(b"cached")
-        with mock.patch("ytpipeline.transcribe.run") as m:
+        with mock.patch("vidsummarizer.transcribe.run") as m:
             path = transcribe.download_audio(VID, self.audio_dir, [], False)
         self.assertEqual(path, self.mp3)
         m.assert_not_called()
 
     def test_downloads_when_missing(self):
-        with mock.patch("ytpipeline.transcribe.run",
+        with mock.patch("vidsummarizer.transcribe.run",
                         side_effect=self._ok_run) as m:
             path = transcribe.download_audio(VID, self.audio_dir, [], False)
         self.assertEqual(path, self.mp3)
@@ -104,7 +104,7 @@ class TestDownloadAudio(unittest.TestCase):
 
     def test_redownload_ignores_cache(self):
         self.mp3.write_bytes(b"cached")
-        with mock.patch("ytpipeline.transcribe.run",
+        with mock.patch("vidsummarizer.transcribe.run",
                         side_effect=self._ok_run) as m:
             transcribe.download_audio(VID, self.audio_dir, [], True)
         m.assert_called_once()
@@ -119,17 +119,17 @@ class TestDownloadAudio(unittest.TestCase):
             return self._ok_run(cmd)
 
         sleeps = []
-        with mock.patch("ytpipeline.transcribe.run", flaky), \
-             mock.patch("ytpipeline.transcribe.time.sleep", sleeps.append):
+        with mock.patch("vidsummarizer.transcribe.run", flaky), \
+             mock.patch("vidsummarizer.transcribe.time.sleep", sleeps.append):
             path = transcribe.download_audio(VID, self.audio_dir, [], False)
         self.assertEqual(len(attempts), 3)
         self.assertEqual(sleeps, [8, 8])
         self.assertEqual(path, self.mp3)
 
     def test_persistent_failures_abort(self):
-        with mock.patch("ytpipeline.transcribe.run",
+        with mock.patch("vidsummarizer.transcribe.run",
                         side_effect=RuntimeError("down for good")), \
-             mock.patch("ytpipeline.transcribe.time.sleep"):
+             mock.patch("vidsummarizer.transcribe.time.sleep"):
             assert_dies(self,
                         lambda: transcribe.download_audio(VID, self.audio_dir,
                                                           [], False),
@@ -137,7 +137,7 @@ class TestDownloadAudio(unittest.TestCase):
 
     def test_missing_output_file_dies(self):
         # fake yt-dlp "succeeds" but produces nothing
-        with mock.patch("ytpipeline.transcribe.run",
+        with mock.patch("vidsummarizer.transcribe.run",
                         return_value=ns(returncode=0, stdout="", stderr="")):
             assert_dies(self,
                         lambda: transcribe.download_audio(VID, self.audio_dir,
@@ -229,7 +229,7 @@ class TestRunWhisper(unittest.TestCase):
 
     def test_mp3_direct_happy_path(self):
         self.fail_first_mp3 = False
-        with mock.patch("ytpipeline.transcribe.run", side_effect=self._run):
+        with mock.patch("vidsummarizer.transcribe.run", side_effect=self._run):
             result = transcribe.run_whisper(self.model, self.mp3, self.dir,
                                             "auto", 4)
         self.assertEqual(len(self.calls), 1)  # no ffmpeg needed
@@ -242,7 +242,7 @@ class TestRunWhisper(unittest.TestCase):
 
     def test_falls_back_to_wav_conversion(self):
         self.fail_first_mp3 = True
-        with mock.patch("ytpipeline.transcribe.run", side_effect=self._run):
+        with mock.patch("vidsummarizer.transcribe.run", side_effect=self._run):
             result = transcribe.run_whisper(self.model, self.mp3, self.dir,
                                             "auto", 4)
         self.assertEqual([c[0] for c in self.calls],
@@ -357,7 +357,7 @@ class TestBuildOutput(unittest.TestCase):
         self.assertIn(f"url: {URL}", lines)
         self.assertIn("language: en", lines)
         self.assertIn("model: ggml-small.bin", lines)
-        self.assertTrue(any(ln.startswith("tool: yt-pipeline") for ln in lines))
+        self.assertTrue(any(ln.startswith("tool: vidsummarizer") for ln in lines))
         # blank line between header and body, paragraphs separated by blank
         header, body = out.split("\n\n", 1)
         self.assertFalse(header.startswith("\n"))
@@ -412,16 +412,16 @@ class TestTranscribeVideo(unittest.TestCase):
     def _stub(self, **over):
         rt = over.pop("run_whisper", self.whisper_json)
         patches = [
-            mock.patch("ytpipeline.transcribe.require_tools"),
-            mock.patch("ytpipeline.transcribe.fetch_metadata",
+            mock.patch("vidsummarizer.transcribe.require_tools"),
+            mock.patch("vidsummarizer.transcribe.fetch_metadata",
                        return_value={"title": "T", "channel": "C",
                                      "upload_date": "20240102",
                                      "duration": 61}),
-            mock.patch("ytpipeline.transcribe.download_audio",
+            mock.patch("vidsummarizer.transcribe.download_audio",
                        return_value=self.audio),
-            mock.patch("ytpipeline.transcribe.ensure_model",
+            mock.patch("vidsummarizer.transcribe.ensure_model",
                        return_value=self.model),
-            mock.patch("ytpipeline.transcribe.run_whisper", return_value=rt),
+            mock.patch("vidsummarizer.transcribe.run_whisper", return_value=rt),
         ]
         for p in patches:
             p.start()

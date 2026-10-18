@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.common (parsing, logging, subprocess wrapper,
+"""Unit tests for vidsummarizer.common (parsing, logging, subprocess wrapper,
 tool detection, workdir resolution)."""
 
 import os
@@ -9,7 +9,7 @@ from unittest import mock
 
 from tests.helpers import assert_dies, capture as _capture, ns, stderr_of
 
-from ytpipeline import common
+from vidsummarizer import common
 
 
 class TestVideoIdParsing(unittest.TestCase):
@@ -214,7 +214,7 @@ class TestRun(unittest.TestCase):
         return ns(returncode=rc, stdout=out, stderr=errout)
 
     def test_success_returns_proc(self):
-        with mock.patch("ytpipeline.common.subprocess.run",
+        with mock.patch("vidsummarizer.common.subprocess.run",
                         return_value=self._proc(0, out="ok")) as m:
             proc = common.run(["ls"], "listing")
         self.assertEqual(proc.stdout, "ok")
@@ -223,7 +223,7 @@ class TestRun(unittest.TestCase):
     def test_failure_dies_by_default_with_stderr_tail(self):
         def fake_run(cmd, **kw):
             return self._proc(1, errout="line1\nline2\nline3")
-        with mock.patch("ytpipeline.common.subprocess.run", fake_run):
+        with mock.patch("vidsummarizer.common.subprocess.run", fake_run):
             err = assert_dies(self,
                               lambda: common.run(["boom"], "boom stage"),
                               pattern="boom stage failed")
@@ -232,14 +232,14 @@ class TestRun(unittest.TestCase):
     def test_failure_nonfatal_raises_runtime_error(self):
         def fake_run(cmd, **kw):
             return self._proc(1, errout="nope")
-        with mock.patch("ytpipeline.common.subprocess.run", fake_run):
+        with mock.patch("vidsummarizer.common.subprocess.run", fake_run):
             with self.assertRaises(RuntimeError):
                 common.run(["boom"], "boom stage", fatal=False)
 
     def test_command_not_found_dies(self):
         def fake_run(cmd, **kw):
             raise FileNotFoundError(cmd[0])
-        with mock.patch("ytpipeline.common.subprocess.run", fake_run):
+        with mock.patch("vidsummarizer.common.subprocess.run", fake_run):
             assert_dies(self, lambda: common.run(["no-such-tool"], "stage x"),
                         pattern="command not found")
 
@@ -250,13 +250,13 @@ class TestToolDetection(unittest.TestCase):
 
         def fake_which(name, path=None):
             return "/usr/bin/" + name if name in present else None
-        with mock.patch("ytpipeline.common.shutil.which", fake_which):
+        with mock.patch("vidsummarizer.common.shutil.which", fake_which):
             self.assertEqual(common.missing_tools(["yt-dlp", "whisper-cli"]),
                              ["whisper-cli"])
             self.assertEqual(common.missing_tools(["ffmpeg"]), [])
 
     def test_require_tools_ok_when_present(self):
-        with mock.patch("ytpipeline.common.shutil.which",
+        with mock.patch("vidsummarizer.common.shutil.which",
                         lambda name, path=None: "/usr/bin/" + name):
             err, exc = stderr_of(
                 lambda: common.require_tools(["yt-dlp", "ffmpeg"]))
@@ -264,7 +264,7 @@ class TestToolDetection(unittest.TestCase):
         self.assertEqual(err, "")
 
     def test_require_tools_dies_with_install_hints(self):
-        with mock.patch("ytpipeline.common.shutil.which", lambda n, path=None: None):
+        with mock.patch("vidsummarizer.common.shutil.which", lambda n, path=None: None):
             err = assert_dies(
                 self, lambda: common.require_tools(["yt-dlp", "whisper-cli"]),
                 pattern="missing required external tool")
@@ -283,14 +283,14 @@ class TestBaseDir(unittest.TestCase):
         self.dir = Path(self._tmp.name)
 
     def test_executable_path_gives_its_directory(self):
-        exe = self.dir / "yt-pipeline"
+        exe = self.dir / "vidsummarizer"
         exe.write_text("#!/bin/sh\n")
         with mock.patch("sys.argv", [str(exe), "run"]):
             self.assertEqual(common.base_dir(), self.dir)
 
     def test_source_checkout_gives_package_parent(self):
         # argv[0] is __main__.py or a .py file -> repo root (package parent)
-        main_py = self.dir / "ytpipeline" / "__main__.py"
+        main_py = self.dir / "vidsummarizer" / "__main__.py"
         main_py.parent.mkdir()
         main_py.write_text("")
         with mock.patch("sys.argv", [str(main_py)]):
@@ -327,7 +327,7 @@ class TestResolveWorkdir(unittest.TestCase):
     def test_writable_base_dir_used(self):
         base = self.dir / "base"
         base.mkdir()
-        with mock.patch("ytpipeline.common.base_dir",
+        with mock.patch("vidsummarizer.common.base_dir",
                         return_value=base):
             wd, _ = _capture(lambda: common.resolve_workdir(None))
         self.assertEqual(wd, base)
@@ -339,10 +339,10 @@ class TestResolveWorkdir(unittest.TestCase):
         self.addCleanup(lambda: ro.chmod(0o755))
         xdg = self.dir / "xdg"
         xdg.mkdir()
-        with mock.patch("ytpipeline.common.base_dir", return_value=ro), \
+        with mock.patch("vidsummarizer.common.base_dir", return_value=ro), \
              mock.patch.dict(os.environ, {"XDG_DATA_HOME": str(xdg)}):
             wd, err = _capture(lambda: common.resolve_workdir(None))
-        self.assertEqual(wd, xdg / "yt-pipeline")
+        self.assertEqual(wd, xdg / "vidsummarizer")
         self.assertIn("not writable", err)
         self.assertIn("--workdir", err)          # tells the user the way out
 

@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from . import VERSION
 from .common import die, log, warn
 
-TOOL = f"yt-pipeline {VERSION} (local LLM via Ollama)"
+TOOL = f"vidsummarizer {VERSION} (local LLM via Ollama)"
 
 DEFAULT_MODEL = "qwen3.6"
 
@@ -175,7 +175,7 @@ class Ollama:
         log(f"Ollama not running at {self.host}; trying to start 'ollama serve' ...")
         try:
             logf = open(os.path.join(os.environ.get("TMPDIR", "/tmp"),
-                                     "ollama-serve-yt-pipeline.log"), "ab")
+                                     "ollama-serve-vidsummarizer.log"), "ab")
             subprocess.Popen(["ollama", "serve"], stdout=logf, stderr=logf,
                              stdin=subprocess.DEVNULL, start_new_session=True)
         except FileNotFoundError:
@@ -269,7 +269,7 @@ class Ollama:
 # Prompting
 #
 # The five prompt templates live as versioned JSON "variant" files in the
-# project (prompts/*.json), not as constants here; see ytpipeline/prompts.py.
+# project (prompts/*.json), not as constants here; see vidsummarizer/prompts.py.
 # v1-baseline.json holds the exact historical wording of this stage.
 # --------------------------------------------------------------------------- #
 
@@ -490,7 +490,7 @@ def build_note(title, meta, summary, summary_words, model, prompt_name=""):
         parts.append(f"[Watch on YouTube]({meta['url']})\n")
     parts.append(summary)
     parts.append("\n---\n")
-    parts.append(f"*Summary generated locally by yt-pipeline {VERSION} with "
+    parts.append(f"*Summary generated locally by vidsummarizer {VERSION} with "
                  f"{model} (Ollama), from a transcript by "
                  f"{meta.get('tool', 'yt-transcribe')}. {summary_words} words.*")
     return "\n".join(parts)
@@ -519,7 +519,7 @@ def resolve_transcripts(opts, targets):
             else:
                 die(f"no transcript '{vid}.txt' found in "
                     f"{', '.join(opts.transcripts_dirs)}; run "
-                    f"'yt-pipeline transcribe {vid}' first "
+                    f"'vidsummarizer transcribe {vid}' first "
                     f"(or pass a .txt path directly)")
         else:
             die(f"not a transcript file, video id or YouTube URL: {t}")

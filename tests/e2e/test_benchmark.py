@@ -1,5 +1,5 @@
 """E2E tests for the benchmark / prompt-variant commands: the real CLI
-(`python3 -m ytpipeline`) as a subprocess, with the in-process fake Ollama
+(`python3 -m vidsummarizer`) as a subprocess, with the in-process fake Ollama
 server answering both the summarizer and the judge calls (distinguished by
 the request text via the server's responder hook).
 
@@ -183,11 +183,11 @@ class TestZipappBenchmark(unittest.TestCase):
     packed-set 'transcript not found' crash and the prompts-materialization
     NotADirectoryError crash from the executable."""
 
-    EXE = REPO / "dist" / "yt-pipeline"
+    EXE = REPO / "dist" / "vidsummarizer"
 
     def setUp(self):
         if not self.EXE.exists():
-            self.skipTest("dist/yt-pipeline not built (run ./build.sh)")
+            self.skipTest("dist/vidsummarizer not built (run ./build.sh)")
         import tempfile
         from tests.helpers import FakeOllamaServer, fake_env
         self.ollama = FakeOllamaServer()

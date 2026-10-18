@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake ollama CLI for yt-pipeline E2E tests (shadowed onto PATH by tests).
+"""Fake ollama CLI for vidsummarizer E2E tests (shadowed onto PATH by tests).
 
 Only `ollama --version` is exercised (via doctor); the actual LLM traffic
 goes over HTTP to the in-process FakeOllamaServer from tests/helpers.py.
