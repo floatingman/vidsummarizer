@@ -4,7 +4,12 @@ Reads the plain-text transcripts written by the transcription stage,
 summarizes them with a local model served by Ollama, and writes an
 Obsidian-ready markdown note per video:
 
-    transcripts/<id>.txt  ->  Ollama (local LLM)  ->  summaries/<Title>.md
+    transcripts/<Title>.txt  ->  Ollama (local LLM)  ->  summaries/<Title>.md
+
+Both files are named after the (sanitized) video title; the video id stays
+discoverable through the header/frontmatter metadata, so 'summarize <id>'
+and 'summarize --all' keep working, including for pre-2.3 id-named
+transcripts already on disk.
 
 External dependencies (checked at runtime): the `ollama` binary plus the
 model given by --model (default qwen3.6), both served on the local Ollama
@@ -22,7 +27,9 @@ import urllib.request
 from datetime import datetime, timezone
 
 from . import VERSION
-from .common import die, log, warn
+from .common import (die, find_transcript, legacy_video_id, log,
+                     output_dir_lock, safe_name, titled_path, warn,
+                     write_text_atomic)  # safe_name is re-exported
 
 TOOL = f"vidsummarizer {VERSION} (local LLM via Ollama)"
 
@@ -45,9 +52,6 @@ LANG_NAMES = {
     "th": "Thai", "id": "Indonesian", "cs": "Czech", "el": "Greek",
     "he": "Hebrew", "hu": "Hungarian", "ro": "Romanian",
 }
-
-# Files forbidden by Obsidian/macOS/Windows in note names
-UNSAFE_FILENAME = re.compile(r'[\\/:*?"<>|#^\[\]\x00-\x1f]')
 
 
 # --------------------------------------------------------------------------- #
@@ -83,12 +87,6 @@ def chunk_text(text, chunk_words):
     if cur:
         chunks.append(" ".join(cur))
     return chunks
-
-
-def safe_name(title, max_len=90):
-    name = UNSAFE_FILENAME.sub("", title)
-    name = re.sub(r"\s+", " ", name).strip().strip(".")
-    return name[:max_len].strip()
 
 
 def yaml_str(value):
@@ -130,6 +128,18 @@ def parse_transcript(text):
         return {}, text.strip()
     body = "\n".join(lines[i:]).strip()
     return meta, body
+
+
+def ensure_video_id(meta, path):
+    """The transcript's video id: the header's, or the stem of a headerless
+    pre-2.3 <id>.txt file. Fills in meta['video_id'] so the note's
+    frontmatter, its output name and the already-summarized bookkeeping all
+    agree on the video; returns '' when the file carries no id."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    vid = meta.get("video_id") or legacy_video_id(stem) or ""
+    if vid:
+        meta["video_id"] = vid
+    return vid
 
 
 def transcript_language_instruction(meta, body):
@@ -381,7 +391,7 @@ def summarize_transcript(ollama, path, opts):
     meta, body = parse_transcript(raw)
     if not body:
         die(f"{path}: transcript is empty")
-    vid = meta.get("video_id", "")
+    vid = ensure_video_id(meta, path)
     tag = vid or os.path.basename(path)
     ps = prompts_for(opts)
     # a style may set its own word cap; an explicit --max-words always wins
@@ -501,7 +511,10 @@ def build_note(title, meta, summary, summary_words, model, prompt_name=""):
 # --------------------------------------------------------------------------- #
 
 def resolve_transcripts(opts, targets):
-    """Turn positional args (paths, video ids, URLs) into transcript paths."""
+    """Turn positional args (paths, video ids, URLs) into transcript paths.
+
+    Ids and URLs locate the transcript through its header's video_id, so
+    both the current title-named files and the old id-named ones are found."""
     ids = re.compile(r"^[A-Za-z0-9_-]{11}$")
     url_id = re.compile(r"(?:v=|youtu\.be/|shorts/)([A-Za-z0-9_-]{11})")
     out = []
@@ -512,12 +525,11 @@ def resolve_transcripts(opts, targets):
         m = url_id.search(t) or (ids.match(t) and t)
         vid = m.group(1) if hasattr(m, "group") else m
         if vid:
-            cands = [os.path.join(d, vid + ".txt") for d in opts.transcripts_dirs]
-            hit = next((c for c in cands if os.path.isfile(c)), None)
+            hit = find_transcript(vid, opts.transcripts_dirs)
             if hit:
-                out.append(hit)
+                out.append(str(hit))
             else:
-                die(f"no transcript '{vid}.txt' found in "
+                die(f"no transcript for video {vid} found in "
                     f"{', '.join(opts.transcripts_dirs)}; run "
                     f"'vidsummarizer transcribe {vid}' first "
                     f"(or pass a .txt path directly)")
@@ -547,18 +559,13 @@ def summarized_video_ids(out_dir):
 
 
 def output_path(out_dir, meta, stem):
-    os.makedirs(out_dir, exist_ok=True)
+    """summaries/<sanitized title>.md, sharing the transcript naming rules
+    (see common.titled_path): re-runs of the same video update its own note,
+    and a different video with the same sanitized title gets the id
+    appended instead of overwriting it."""
     vid = meta.get("video_id", "")
     base = safe_name(meta.get("title") or stem) or (vid or stem)
-    path = os.path.join(out_dir, base + ".md")
-    if os.path.exists(path) and vid:
-        # same name but a different video -> disambiguate with the id
-        with open(path, encoding="utf-8", errors="replace") as f:
-            head = f.read(4096)
-        m = re.search(r"^video_id:\s*\"?([A-Za-z0-9_-]{11})\"?", head, re.M)
-        if not m or m.group(1) != vid:
-            path = os.path.join(out_dir, f"{base} ({vid}).md")
-    return path
+    return titled_path(out_dir, base, vid, ".md")
 
 
 # --------------------------------------------------------------------------- #
@@ -600,10 +607,11 @@ def summarize_targets(paths, opts, ollama=None):
         else:
             meta, _ = parse_transcript(open(path, encoding="utf-8",
                                             errors="replace").read())
-            out = output_path(opts.out, meta,
-                              os.path.splitext(os.path.basename(path))[0])
-            with open(out, "w", encoding="utf-8") as f:
-                f.write(note + "\n")
+            ensure_video_id(meta, path)  # legacy <id>.txt: name notes by id
+            with output_dir_lock(opts.out):  # never race another writer
+                out = output_path(opts.out, meta,
+                                  os.path.splitext(os.path.basename(path))[0])
+                write_text_atomic(out, note + "\n")
             log(f"[{tag}] wrote {out} ({info['words']} words, "
                 f"{info['elapsed']:.0f}s)")
     return 1 if failures else 0

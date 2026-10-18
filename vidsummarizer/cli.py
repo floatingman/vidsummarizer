@@ -17,6 +17,7 @@ With more than one video the work is overlapped by a small worker pool
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from . import VERSION
 from .common import PROG, die, resolve_workdir
@@ -92,8 +93,8 @@ def add_transcribe_opts(p, out_flag=("-o", "--out"), out_help=None):
                         "separate several, or use --batch FILE")
     p.add_argument(*out_flag, type=str, default=None, metavar="FILE",
                    help=out_help or "output transcript file "
-                        "(default: <workdir>/transcripts/<video_id>.txt; one "
-                        "video only)")
+                        "(default: <workdir>/transcripts/<Title>.txt, named "
+                        "after the sanitized video title; one video only)")
     p.add_argument("--audio-dir", type=str, default=None,
                    help="directory for downloaded mp3 files "
                         "(default: <workdir>/audio)")
@@ -229,7 +230,7 @@ def build_parser():
     add_transcribe_opts(
         p_run, out_flag=("-o", "--transcript-out"),
         out_help="output transcript file (default: "
-                 "<workdir>/transcripts/<video_id>.txt)")
+                 "<workdir>/transcripts/<Title>.txt)")
     add_summarize_opts(p_run, run_mode=True)
     p_run.add_argument("--out", metavar="DIR", default=None,
                        help="output directory for notes "
@@ -388,9 +389,10 @@ def build_parser():
 # --------------------------------------------------------------------------- #
 
 def cmd_summarize(args):
-    from .summarize import (output_path, parse_transcript, resolve_transcripts,
-                            summarized_video_ids, summarize_targets)
-    from .common import die, log
+    from .summarize import (ensure_video_id, output_path, parse_transcript,
+                            resolve_transcripts, summarized_video_ids,
+                            summarize_targets)
+    from .common import die, log, transcripts_by_id
     workdir = resolve_workdir(args.workdir)
     args.workdir = str(workdir)
 
@@ -412,27 +414,48 @@ def cmd_summarize(args):
         src = transcripts_dirs[0]
         if not _os.path.isdir(src):
             die(f"transcripts directory not found: {src}")
-        files = sorted(_os.path.join(src, f) for f in _os.listdir(src)
+        files = sorted(Path(src) / f for f in _os.listdir(src)
                        if f.endswith(".txt"))
         if not files:
             die(f"no .txt transcripts in {src}")
         done = summarized_video_ids(args.out)
-        targets = []
+        # a video may have several transcript files on disk (a legacy
+        # <id>.txt next to its newer title-named file): keep one per video
+        keep = transcripts_by_id(src)
+        targets, seen, skipped_done, skipped_dupes = [], set(), 0, 0
         for f in files:
             meta, _ = parse_transcript(open(f, encoding="utf-8",
                                             errors="replace").read())
-            vid = meta.get("video_id", "")
-            if vid and vid in done and not args.force:
-                continue
-            if not vid and os.path.exists(
+            # a headerless pre-2.3 <id>.txt is identified by its filename,
+            # so it deduplicates and counts as done like any other file
+            vid = ensure_video_id(meta, f)
+            if vid:
+                if vid in done and not args.force:
+                    skipped_done += 1
+                    continue
+                if vid in seen or keep.get(vid) not in (None, f):
+                    skipped_dupes += 1  # another file of this video won
+                    continue
+                seen.add(vid)
+            elif os.path.exists(
                     output_path(args.out, meta,
-                                os.path.splitext(os.path.basename(f))[0])) \
+                                os.path.splitext(f.name)[0])) \
                     and not args.force:
+                skipped_done += 1
                 continue
             targets.append(f)
-        skipped = len(files) - len(targets)
-        log(f"found {len(files)} transcripts, {skipped} already summarized, "
-            f"{len(targets)} to do" + (" (--force to redo)" if skipped else ""))
+        # report the two skip reasons separately: a deduped extra copy of
+        # an already-listed video is not "already summarized"
+        bits = []
+        if skipped_done:
+            bits.append(f"{skipped_done} already summarized")
+        if skipped_dupes:
+            word = "copy" if skipped_dupes == 1 else "copies"
+            bits.append(f"{skipped_dupes} duplicate {word}")
+        log(f"found {len(files)} transcripts, "
+            f"{', '.join(bits) if bits else '0 already summarized'}, "
+            f"{len(targets)} to do"
+            + (" (--force to redo)" if skipped_done else ""))
         if not targets:
             log("nothing to do.")
             return 0
