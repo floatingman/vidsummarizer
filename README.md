@@ -1,17 +1,64 @@
 # vidsummarizer
 
-One portable executable for the whole local YouTube pipeline:
+**Fully local YouTube transcription and summarization. No cloud, no API keys.**
+
+[![tests](https://github.com/floatingman/vidsummarizer/actions/workflows/ci.yml/badge.svg)](https://github.com/floatingman/vidsummarizer/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/floatingman/vidsummarizer)](https://github.com/floatingman/vidsummarizer/releases/latest)
+[![license](https://img.shields.io/github/license/floatingman/vidsummarizer)](LICENSE)
+
+One portable executable for the whole pipeline:
 
 ```
 YouTube URL -> yt-dlp (mp3) -> whisper.cpp transcript -> local-LLM summary (Obsidian note)
 ```
 
-It merges the two former tools, `yt-transcribe` 1.0.0 (download + transcribe)
-and `yt-summarize` 1.0.0 (local-LLM summary) into a single self-contained
-file. No cloud APIs, no API keys; audio download, transcription and
-summarization all run on your machine. The whole tool is Python standard
-library only, so it ships as one executable file that can be copied to other
-computers.
+<p align="center">
+  <a href="docs/demo.cast" title="asciinema recording of the run shown below"><img src="docs/demo.gif" alt="A real run of vidsummarizer: one command downloads a YouTube video's audio, transcribes it locally with whisper.cpp, summarizes it with a local Ollama model, and prints the resulting Obsidian-ready markdown note."></a>
+</p>
+
+<p align="center"><em>A real run, nothing staged: one command, three local stages, zero cloud.</em></p>
+
+Audio download, transcription and summarization all run on your machine.
+The whole tool is Python standard library only, so it ships as one small
+executable file that can be copied to any computer with Python 3.9+.
+
+## Quickstart
+
+```bash
+curl -LO https://github.com/floatingman/vidsummarizer/releases/latest/download/vidsummarizer
+chmod +x vidsummarizer
+./vidsummarizer https://www.youtube.com/watch?v=iCvmsMzlF7o
+```
+
+That is the whole pipeline: mp3, transcript, summary note. On a fresh
+machine run `./vidsummarizer doctor` first: it checks for `yt-dlp`,
+`ffmpeg`, `whisper-cli` and `ollama`, and prints exactly how to install
+whatever is missing (see ["What the target computer needs"](#what-the-target-computer-needs)
+below).
+
+## Features
+
+- **Fully local and private** - yt-dlp + whisper.cpp + Ollama on your machine. No cloud APIs, no API keys, no accounts; audio and transcripts never leave the computer.
+- **One portable file** - a single ~50 KB executable (a Python zipapp, stdlib only) that runs anywhere Python 3.9+ does; `scp` it to another box and go.
+- **Batch lists** - many videos in one run: several arguments, comma-separated lists, `--batch` files, or any mix; a failing video never stops the batch.
+- **Parallel pipeline** - a worker pool overlaps transcription of later videos with summarization of earlier ones (`-j N`), so batches finish sooner than one-at-a-time.
+- **Summary styles** - `--style actionable | short | study-guide`, or add your own style as a versioned prompt-variant file.
+- **Prompt benchmarking** - `benchmark` scores the prompt variants with deterministic checks plus a local LLM-as-judge, so you promote a measured winner instead of a guess.
+- **Obsidian-ready output** - LLM-readable plain-text transcripts; markdown notes with YAML frontmatter that drop into a vault as regular notes.
+- **Doctor** - `doctor` inventories the machine with per-tool install hints; every command checks its own needs before starting instead of dying mid-run.
+
+## Local vs cloud/API summarizers
+
+| | vidsummarizer | cloud / API-key tools |
+|---|---|---|
+| API key, account | none, ever | required up front |
+| Where audio and transcripts go | stay on your machine | uploaded to a service |
+| Cost after setup | free (your CPU/GPU) | per-video or per-minute fees |
+| Works offline | yes (after one-time model downloads) | no |
+| Move to another machine | copy one file | reinstall and re-authenticate |
+| Batch a whole watchlist | `--batch list.txt -j 3` | usually one video at a time |
+
+## Commands
 
 ```
 vidsummarizer <url(s)>            full pipeline in one command (same as 'run')
@@ -24,12 +71,16 @@ vidsummarizer prompts <list|show|new|promote>   manage the prompt variants
 vidsummarizer doctor               check this machine for everything the pipeline needs
 ```
 
-All current behavior of the two original tools is preserved: LLM-readable
-plain-text transcripts, and markdown summaries of at most 500 words
-(actionable content preferred, otherwise an overview) that import into an
-Obsidian vault as regular notes. The summary *style* is selectable per run
-(`--style`: actionable, short, study guide, ...); see "Summary styles"
-below. See "Output formats" below.
+It merges the two former tools, `yt-transcribe` 1.0.0 (download +
+transcribe) and `yt-summarize` 1.0.0 (local-LLM summary) into a single
+self-contained file (released under the name `yt-pipeline` until 3.0.0;
+formats and behavior are unchanged, and the old repository URL redirects
+here). All current behavior of the two original tools is preserved:
+LLM-readable plain-text transcripts, and markdown summaries of at most
+500 words (actionable content preferred, otherwise an overview) that
+import into an Obsidian vault as regular notes. The summary *style* is
+selectable per run (`--style`: actionable, short, study guide, ...); see
+"Summary styles" below. See "Output formats" below.
 
 Every video-taking command (`<url(s)>` above) accepts a whole list of
 videos in one run: several arguments, comma-separated values, a `--batch`
@@ -40,7 +91,7 @@ summarization of earlier ones ("Batch processing" below).
 ## The one-file executable
 
 `./build.sh` produces `dist/vidsummarizer`, a single self-contained file
-(~28 KB) built with the Python standard library's `zipapp` module: the whole
+(~50 KB) built with the Python standard library's `zipapp` module: the whole
 `vidsummarizer` package is packed into one executable archive with a
 `#!/usr/bin/env python3` shebang. It does not need this checkout, a git
 clone, or any pip packages at runtime; it only needs a Python 3.9+
