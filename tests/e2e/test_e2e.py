@@ -15,8 +15,8 @@ import unittest
 from pathlib import Path
 
 from tests.helpers import (FIXTURES, FAKE_BIN, FakeOllamaServer, fake_env,
-                           run_cli, tool_log)
-from ytpipeline.common import safe_name
+                           run_cli, tool_log, REPO)
+from ytpipeline.common import safe_name, video_id_in_file
 
 VID = "dQw4w9WgXcQ"
 VID2 = "jNQXAC9IVRw"
@@ -310,6 +310,32 @@ class TestTranscribe(E2ETest):
         self.assertIsNone(self.transcript_for(VID))
         self.assertIsNotNone(self.transcript_for(VID2))
 
+    def test_transcribe_two_processes_same_title_no_loss(self):
+        # regression: two yt-pipeline PROCESSES transcribing different videos
+        # with the same sanitized title must not silently overwrite one
+        # transcript (the exists-check/write pair is guarded by a flock)
+        import subprocess
+        import sys
+        cmd = [sys.executable, "-m", "ytpipeline", "transcribe"]
+        procs = [subprocess.Popen(
+            [*cmd, vid, "-j", "1", "--workdir", str(self.workdir)],
+            cwd=str(REPO),
+            env=self.env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, errors="replace") for vid in (VID, VID2)]
+        for p in procs:
+            _, err = p.communicate(timeout=120)
+            self.assertEqual(p.returncode, 0, err)
+        tdir = self.workdir / "transcripts"
+        files = sorted(tdir.glob("*.txt"))
+        self.assertEqual(len(files), 2, [f.name for f in files])
+        owners = {video_id_in_file(f) for f in files}
+        self.assertEqual(owners, {VID, VID2})  # both videos survived
+        names = {f.name for f in files}
+        self.assertIn(TRANSCRIPT_NAME, names)  # one plain title name
+        self.assertEqual(
+            len([n for n in names if n.startswith(
+                safe_name(FIXTURE_TITLE) + " (")]), 1)  # one id-suffixed
+
     def test_transcribe_dead_video_fails_cleanly(self):
         env = dict(self.env)
         env["YT_FAKE_YTDLP_FAIL_IDS"] = VID
@@ -421,6 +447,19 @@ class TestSummarize(E2ETest):
         self.assertNotIn("STALE LEGACY BODY", user)
         self.assertTrue(
             (self.workdir / "summaries" / "Fixture Talk - Testing Pipelines.md").exists())
+
+    def test_summarize_all_counts_duplicates_separately_from_done(self):
+        # 4 transcripts covering 3 videos, nothing summarized yet: the
+        # deduped copy must not be reported as "already summarized"
+        self.seed_transcript("FxTureVid01")
+        self.seed_transcript("FxTureVid01", legacy=True)
+        self.seed_transcript("SecndVid001", title="Second Fixture Talk")
+        self.seed_transcript("ThirdVid001", title="Third Fixture Talk")
+        r = self.cli("summarize", "--all", *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("found 4 transcripts, 1 duplicate copy, 3 to do", r.stderr)
+        self.assertNotIn("already summarized", r.stderr)
+        self.assertEqual(len(self.ollama.chat_requests), 3)
 
     def test_summarize_all_redoes_with_force(self):
         self.seed_transcript("FxTureVid01")

@@ -27,8 +27,8 @@ import urllib.request
 from datetime import datetime, timezone
 
 from . import VERSION
-from .common import (die, find_transcript, log, naming_lock, safe_name,
-                     titled_path, warn)  # safe_name is re-exported here
+from .common import (die, find_transcript, log, output_dir_lock, safe_name,
+                     titled_path, warn, write_text_atomic)  # safe_name is re-exported
 
 TOOL = f"yt-pipeline {VERSION} (local LLM via Ollama)"
 
@@ -594,11 +594,10 @@ def summarize_targets(paths, opts, ollama=None):
         else:
             meta, _ = parse_transcript(open(path, encoding="utf-8",
                                             errors="replace").read())
-            with naming_lock:  # same-titled videos must not race the write
+            with output_dir_lock(opts.out):  # never race another writer
                 out = output_path(opts.out, meta,
                                   os.path.splitext(os.path.basename(path))[0])
-                with open(out, "w", encoding="utf-8") as f:
-                    f.write(note + "\n")
+                write_text_atomic(out, note + "\n")
             log(f"[{tag}] wrote {out} ({info['words']} words, "
                 f"{info['elapsed']:.0f}s)")
     return 1 if failures else 0

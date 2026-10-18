@@ -421,26 +421,38 @@ def cmd_summarize(args):
         # a video may have several transcript files on disk (a legacy
         # <id>.txt next to its newer title-named file): keep one per video
         keep = transcripts_by_id(src)
-        targets, seen = [], set()
+        targets, seen, skipped_done, skipped_dupes = [], set(), 0, 0
         for f in files:
             meta, _ = parse_transcript(open(f, encoding="utf-8",
                                             errors="replace").read())
             vid = meta.get("video_id", "")
             if vid:
                 if vid in done and not args.force:
+                    skipped_done += 1
                     continue
                 if vid in seen or keep.get(vid) not in (None, f):
-                    continue  # another file of this video already won
+                    skipped_dupes += 1  # another file of this video won
+                    continue
                 seen.add(vid)
             elif os.path.exists(
                     output_path(args.out, meta,
                                 os.path.splitext(f.name)[0])) \
                     and not args.force:
+                skipped_done += 1
                 continue
             targets.append(f)
-        skipped = len(files) - len(targets)
-        log(f"found {len(files)} transcripts, {skipped} already summarized, "
-            f"{len(targets)} to do" + (" (--force to redo)" if skipped else ""))
+        # report the two skip reasons separately: a deduped extra copy of
+        # an already-listed video is not "already summarized"
+        bits = []
+        if skipped_done:
+            bits.append(f"{skipped_done} already summarized")
+        if skipped_dupes:
+            word = "copy" if skipped_dupes == 1 else "copies"
+            bits.append(f"{skipped_dupes} duplicate {word}")
+        log(f"found {len(files)} transcripts, "
+            f"{', '.join(bits) if bits else '0 already summarized'}, "
+            f"{len(targets)} to do"
+            + (" (--force to redo)" if skipped_done else ""))
         if not targets:
             log("nothing to do.")
             return 0

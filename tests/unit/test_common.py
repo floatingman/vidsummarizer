@@ -95,6 +95,132 @@ class TestTitledPath(unittest.TestCase):
             common.titled_path(self.dir, "Talk", "lmnopqrstuv", ".md"),
             self.dir / "Talk (lmnopqrstuv).md")
 
+    def test_suffixed_name_owned_by_a_third_video_gets_a_counter(self):
+        # contrived: a video C whose title literally ends in " (<id>)" of B
+        plain = common.titled_path(self.dir, "Base", "aaaaaaaaaaa", ".txt")
+        plain.write_text("video_id: aaaaaaaaaaa\n\nA", encoding="utf-8")
+        impostor = self.dir / "Base (bbbbbbbbbbb).txt"
+        impostor.write_text("title: Base (bbbbbbbbbbb)\nvideo_id: ccccccccccc\n\nC",
+                            encoding="utf-8")
+        # video B (title "Base", id bbbbbbbbbbb) must not take C's file
+        got = common.titled_path(self.dir, "Base", "bbbbbbbbbbb", ".txt")
+        self.assertEqual(got, self.dir / "Base (bbbbbbbbbbb) (2).txt")
+        self.assertIn("video_id: ccccccccccc",
+                      impostor.read_text(encoding="utf-8"))  # untouched
+        # and the assignment is stable across re-runs
+        got.write_text("video_id: bbbbbbbbbbb\n\nB", encoding="utf-8")
+        self.assertEqual(
+            common.titled_path(self.dir, "Base", "bbbbbbbbbbb", ".txt"), got)
+
+    def test_counter_walks_past_every_impostor(self):
+        # contrived chain: plain name owned by A, the id-suffixed name by an
+        # impostor C, and the (2) counter name by another impostor D
+        plain = common.titled_path(self.dir, "Base", "aaaaaaaaaaa", ".txt")
+        plain.write_text("video_id: aaaaaaaaaaa\n\nA", encoding="utf-8")
+        for name, vid in (("Base (bbbbbbbbbbb).txt", "ccccccccccc"),
+                          ("Base (bbbbbbbbbbb) (2).txt", "ddddddddddd")):
+            (self.dir / name).write_text(f"title: {name[:-4]}\n"
+                                         f"video_id: {vid}\n\nX",
+                                         encoding="utf-8")
+        got = common.titled_path(self.dir, "Base", "bbbbbbbbbbb", ".txt")
+        self.assertEqual(got, self.dir / "Base (bbbbbbbbbbb) (3).txt")
+
+
+class TestOutputDirLock(unittest.TestCase):
+    """output_dir_lock must exclude other processes, not just threads: two
+    yt-pipeline runs transcribing same-titled videos rely on it."""
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory(prefix="ytp-lock-")
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name) / "transcripts"
+
+    def test_threads_of_one_process_are_serialized(self):
+        import threading
+        order = []
+        barrier = threading.Barrier(2)
+
+        def worker(n):
+            barrier.wait()  # both threads reach the lock at the same time
+            with common.output_dir_lock(self.dir):
+                order.append(("in", n))
+                order.append(("out", n))
+
+        ts = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        # the critical sections never interleave: each "in" is immediately
+        # followed by its own "out"
+        for i in range(0, len(order), 2):
+            self.assertEqual(order[i][0], "in")
+            self.assertEqual(order[i + 1][0], "out")
+            self.assertEqual(order[i][1], order[i + 1][1])
+
+    def test_second_process_blocks_until_released(self):
+        import subprocess
+        import sys
+        import textwrap
+        import time
+        if common.fcntl is None:
+            self.skipTest("no flock on this platform")
+        from tests.helpers import REPO
+        marker = self.dir.parent / "held"
+        code = textwrap.dedent("""\
+            import sys, time
+            sys.path.insert(0, {repo!r})
+            from ytpipeline.common import output_dir_lock
+            with output_dir_lock({dir!r}):
+                open({marker!r}, "w").close()
+                time.sleep(1.5)
+            """).format(repo=str(REPO), dir=str(self.dir), marker=str(marker))
+        proc = subprocess.Popen([sys.executable, "-c", code])
+        try:
+            deadline = time.monotonic() + 10
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(marker.exists(), "child never acquired the lock")
+            t0 = time.monotonic()
+            with common.output_dir_lock(self.dir):
+                blocked_for = time.monotonic() - t0
+            self.assertGreaterEqual(blocked_for, 0.5,
+                                    f"lock did not exclude the other "
+                                    f"process (blocked {blocked_for:.2f}s)")
+        finally:
+            proc.wait(timeout=10)
+
+    def test_lock_file_is_created_and_harmless(self):
+        with common.output_dir_lock(self.dir):
+            pass
+        self.assertTrue((self.dir / ".yt-pipeline.lock").exists())
+
+
+class TestWriteTextAtomic(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory(prefix="ytp-aw-")
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name)
+
+    def test_writes_content_and_leaves_no_temp_file(self):
+        p = self.dir / "Talk.txt"
+        common.write_text_atomic(p, "hello\n")
+        self.assertEqual(p.read_text(encoding="utf-8"), "hello\n")
+        self.assertEqual(list(self.dir.iterdir()), [p])
+        # overwrites in place, still no leftovers
+        common.write_text_atomic(p, "again\n")
+        self.assertEqual(p.read_text(encoding="utf-8"), "again\n")
+        self.assertEqual(list(self.dir.iterdir()), [p])
+
+    def test_temp_names_never_look_like_transcripts(self):
+        # the temp file must not match the *.txt scan patterns
+        p = self.dir / "Talk.txt"
+        common.write_text_atomic(p, "x")
+        self.assertEqual([f.name for f in self.dir.glob("*.txt")],
+                         ["Talk.txt"])
+
 
 class TestTranscriptLookup(unittest.TestCase):
     """Locating a transcript by video id: title-named and legacy files."""

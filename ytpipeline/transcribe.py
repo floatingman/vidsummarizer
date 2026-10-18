@@ -26,9 +26,10 @@ import urllib.request
 from pathlib import Path
 
 from . import VERSION
-from .common import (die, fmt_duration, fmt_ts, log, naming_lock,
+from .common import (die, fmt_duration, fmt_ts, log, output_dir_lock,
                      owned_transcripts, parse_video_id, require_tools, run,
-                     safe_name, titled_path, watch_url)
+                     safe_name, titled_path, watch_url,
+                     write_text_atomic)
 
 DEFAULT_MODEL_NAME = "ggml-small.bin"
 MODEL_BASE_URL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main"
@@ -290,16 +291,19 @@ def transcribe_video(t, workdir):
     if t.out:  # explicit -o/--out: exactly what the user asked for
         out = Path(t.out)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(output, encoding="utf-8")
+        write_text_atomic(out, output)
     else:
         # default: transcripts/<sanitized title>.txt, disambiguated with the
         # video id when a different video already owns that name (the id
         # stays discoverable via the header, so lookups by id keep working)
         title = str(meta.get("title") or "").strip()
-        with naming_lock:  # batch workers may share a sanitized title
+        # the lock spans resolution, write and supersession cleanup, so
+        # neither same-process workers nor another yt-pipeline process can
+        # race the exists-checks against our write
+        with output_dir_lock(workdir / "transcripts"):
             out = titled_path(workdir / "transcripts",
                               safe_name(title) or video_id, video_id, ".txt")
-            out.write_text(output, encoding="utf-8")
+            write_text_atomic(out, output)
             # one transcript per video: drop this video's superseded files
             # (a pre-2.3 <id>.txt, or a file under an older title)
             for old in owned_transcripts(out.parent, video_id):

@@ -2,6 +2,7 @@
 parsing, title-based output naming, external-tool detection, and
 work-directory resolution."""
 
+import contextlib
 import os
 import re
 import shutil
@@ -9,6 +10,11 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-Unix (no flock)
+    fcntl = None
 
 from . import VERSION
 
@@ -192,9 +198,10 @@ MAX_TITLE_BYTES = 200  # stays under Linux/macOS 255-byte filename limits
                         # even for multibyte titles, with room for the
                         # " (<id>)" collision suffix and the extension
 
-# One output-name resolution at a time: batch workers transcribing videos
-# that share a sanitized title must not race the exists-check against the
-# write (which would silently overwrite the first video's file).
+# One output-name resolution at a time within a process: batch workers
+# transcribing videos that share a sanitized title must not race the
+# exists-check against the write (which would silently overwrite the first
+# video's file). output_dir_lock() adds the cross-process equivalent.
 naming_lock = threading.Lock()
 
 
@@ -232,14 +239,72 @@ def titled_path(directory, base, video_id, ext):
     - <base> (<video_id>)<ext> when another video already owns the plain
       name: videos sharing a sanitized title each keep their own file. The
       suffixed name belongs to this video by construction (ids are unique),
-      so re-runs keep updating it.
+      so re-runs keep updating it. In the contrived case where even that
+      name is owned by yet another video (a title that literally ends in
+      " (<id>)"), a " (2)", " (3)" ... counter is appended until a name
+      is free or this video's own.
+
+    Callers hold output_dir_lock() around resolution and write, so the
+    exists-checks cannot race another writer.
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{base}{ext}"
-    if video_id and path.exists() and video_id_in_file(path) != video_id:
-        path = directory / f"{base} ({video_id}){ext}"
+    if video_id:
+        attempt = 0
+        while path.exists() and video_id_in_file(path) != video_id:
+            attempt += 1
+            stem = f"{base} ({video_id})" if attempt == 1 \
+                else f"{base} ({video_id}) ({attempt})"
+            path = directory / f"{stem}{ext}"
+            if attempt > 99:  # pathological: stop looking, take the name
+                break
     return path
+
+
+@contextlib.contextmanager
+def output_dir_lock(directory):
+    """Serialize output-name resolution + write against every other
+    writer of the same directory, in this process (naming_lock) and in any
+    other yt-pipeline process (an OS-level flock on the directory's
+    .yt-pipeline.lock file, released automatically even if a process
+    crashes). Without it, two processes transcribing different videos with
+    the same sanitized title could interleave titled_path()'s exists-check
+    with each other's write and silently drop a transcript; the pre-2.3
+    id-based names could never collide, so that race is new with titles.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    # "a" never truncates; the file is only a lock token, its content stays
+    # empty and it is deliberately never deleted (unlink races re-create it)
+    with open(directory / ".yt-pipeline.lock", "a") as lock_file:
+        unlocked = None
+        try:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                unlocked = fcntl.LOCK_UN
+            with naming_lock:
+                yield
+        finally:
+            if unlocked is not None:
+                try:
+                    fcntl.flock(lock_file.fileno(), unlocked)
+                except OSError:  # pragma: no cover - fd already gone
+                    pass
+
+
+def write_text_atomic(path, content):
+    """Write content to path via a temp file + atomic rename, so a reader
+    in another process (summarize --all, a shell) never sees a half-written
+    transcript or note; on failure the temp file is cleaned up and the
+    previous content of `path`, if any, survives."""
+    path = Path(path)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)  # atomic on the same directory/filesystem
+    finally:
+        tmp.unlink(missing_ok=True)  # no-op after a successful rename
 
 
 def _transcript_entries(directory):

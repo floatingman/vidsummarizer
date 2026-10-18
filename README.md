@@ -482,8 +482,11 @@ audio cache (`audio/<video_id>.mp3`) keeps its id-based name, which never
 collides. Two different videos whose sanitized titles collide never
 overwrite each other: the second one gets ` (<video_id>)` appended to its
 filename, and re-running a video always updates its own single file
-(the workers of one batch that share a title are serialized internally,
-so they cannot race each other's check).
+(name resolution and the write are serialized, both across the workers of
+one batch and across concurrent yt-pipeline processes sharing the work
+directory; the write itself is an atomic rename, so a concurrent reader
+never sees a half-written file). Each output directory also gets a hidden,
+empty `.yt-pipeline.lock` file, the mutex behind that serialization.
 
 ## Differences from the original two tools
 
