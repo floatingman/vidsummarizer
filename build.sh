@@ -34,6 +34,10 @@ cp prompts/*.json build/vidsummarizer/prompts/
 cp benchmarks/set.json build/vidsummarizer/benchset/
 cp benchmarks/transcripts/*.txt build/vidsummarizer/benchset/transcripts/
 
+# Ship the MIT notice inside the one-file distribution: the archive is all a
+# recipient gets, and the license requires the notice in all copies.
+cp LICENSE build/
+
 "$PYTHON" -m zipapp build \
     --python "/usr/bin/env python3" \
     --main "vidsummarizer.cli:main" \

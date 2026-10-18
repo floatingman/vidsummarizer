@@ -54,7 +54,7 @@ below).
 | API key, account | none, ever | required up front |
 | Where audio and transcripts go | stay on your machine | uploaded to a service |
 | Cost after setup | free (your CPU/GPU) | per-video or per-minute fees |
-| Works offline | yes (after one-time model downloads) | no |
+| Works offline | summarize: yes (saved transcripts, local Ollama + installed model); fetch/transcribe: no, they need YouTube | no |
 | Move to another machine | copy one file | reinstall and re-authenticate |
 | Batch a whole watchlist | `--batch list.txt -j 3` | usually one video at a time |
 
