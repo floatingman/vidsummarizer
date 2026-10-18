@@ -1,5 +1,6 @@
 """Shared helpers for yt-pipeline: logging, subprocess wrapper, video-id
-parsing, external-tool detection, and work-directory resolution."""
+parsing, title-based output naming, external-tool detection, and
+work-directory resolution."""
 
 import os
 import re
@@ -172,6 +173,133 @@ def collect_videos(positional, batch_files):
     if dupes:
         warn(f"ignoring duplicate video(s): {', '.join(dupes)}")
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Title-based output naming (transcripts/<Title>.txt, summaries/<Title>.md)
+# --------------------------------------------------------------------------- #
+
+# Characters hostile to filenames: path separators and wildcards on Linux,
+# the set Windows forbids, plus what Obsidian disallows in note names.
+UNSAFE_FILENAME = re.compile(r'[\\/:*?"<>|#^\[\]\x00-\x1f]')
+
+# The video id embedded in a transcript's `key: value` header or a summary
+# note's YAML frontmatter (quoted there); either way near the top of the file.
+VIDEO_ID_HEAD_RE = re.compile(r'^video_id:\s*"?([A-Za-z0-9_-]{11})"?', re.M)
+
+MAX_TITLE_CHARS = 90   # sane cap for a filename built from a runaway title
+MAX_TITLE_BYTES = 200  # stays under Linux/macOS 255-byte filename limits
+                        # even for multibyte titles, with room for the
+                        # " (<id>)" collision suffix and the extension
+
+# One output-name resolution at a time: batch workers transcribing videos
+# that share a sanitized title must not race the exists-check against the
+# write (which would silently overwrite the first video's file).
+naming_lock = threading.Lock()
+
+
+def safe_name(title, max_len=MAX_TITLE_CHARS):
+    """Filesystem-safe file stem for a video title: drop characters that
+    are hostile to filenames on Linux (and reasonably portable elsewhere),
+    collapse whitespace, trim surrounding dots (Windows) and cap the length
+    in characters and UTF-8 bytes."""
+    name = UNSAFE_FILENAME.sub("", str(title))
+    name = re.sub(r"\s+", " ", name).strip().strip(".")
+    name = name[:max_len].strip()
+    while name and len(name.encode("utf-8")) > MAX_TITLE_BYTES:
+        name = name[:-1].rstrip()
+    return name
+
+
+def video_id_in_file(path):
+    """The video id embedded in a transcript's or summary note's header,
+    or None when the file carries none (only the first 4 KiB are read)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            head = f.read(4096)
+    except OSError:
+        return None
+    m = VIDEO_ID_HEAD_RE.search(head)
+    return m.group(1) if m else None
+
+
+def titled_path(directory, base, video_id, ext):
+    """Path for a title-named output file, so two different videos never
+    silently overwrite each other:
+
+    - <base><ext> when that name is free, or when the existing file is this
+      same video's own output (re-running a video updates its file in place);
+    - <base> (<video_id>)<ext> when another video already owns the plain
+      name: videos sharing a sanitized title each keep their own file. The
+      suffixed name belongs to this video by construction (ids are unique),
+      so re-runs keep updating it.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{base}{ext}"
+    if video_id and path.exists() and video_id_in_file(path) != video_id:
+        path = directory / f"{base} ({video_id}){ext}"
+    return path
+
+
+def _transcript_entries(directory):
+    """Yield (video_id, rank, path) for every transcript in a directory:
+    title-named files are matched by the video_id in their header, legacy
+    <id>.txt files by their name. rank orders a video's files: title-named
+    beats legacy, then newest first."""
+    if not os.path.isdir(directory):
+        return
+    for fn in sorted(os.listdir(directory)):
+        path = Path(directory) / fn
+        if not fn.endswith(".txt") or not path.is_file():
+            continue
+        vid = video_id_in_file(path)
+        if not vid:
+            continue
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+        yield vid, (path.stem != vid, mtime), path
+
+
+def transcripts_by_id(directory):
+    """{video_id: transcript path} for a transcripts directory, keeping the
+    best file per video (title-named over the legacy <id>.txt, then the
+    newest)."""
+    best = {}
+    for vid, rank, path in _transcript_entries(directory):
+        if vid not in best or rank > best[vid][0]:
+            best[vid] = (rank, path)
+    return {vid: path for vid, (_, path) in best.items()}
+
+
+def owned_transcripts(directory, video_id):
+    """Every transcript file of one video in a directory: title-named files
+    (matched via their header) and the legacy <id>.txt alike."""
+    owned = [path for vid, _, path in _transcript_entries(directory)
+             if vid == video_id]
+    legacy = Path(directory) / f"{video_id}.txt"
+    if legacy.is_file() and legacy not in owned:
+        owned.append(legacy)
+    return owned
+
+
+def find_transcript(video_id, directories):
+    """The transcript file for a video id, searching the directories in
+    order. Understands both the current title-based names (matched via the
+    header) and the pre-2.3 id-based <id>.txt files (matched by name, even
+    when they carry no header). Prefers the title-named file when a video
+    has both."""
+    for d in directories:
+        hit = transcripts_by_id(d).get(video_id)
+        if hit is None:
+            legacy = Path(d) / f"{video_id}.txt"
+            if legacy.is_file():
+                hit = legacy
+        if hit is not None:
+            return hit
+    return None
 
 
 # --------------------------------------------------------------------------- #

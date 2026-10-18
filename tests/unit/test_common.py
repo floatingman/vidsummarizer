@@ -1,5 +1,5 @@
 """Unit tests for ytpipeline.common (parsing, logging, subprocess wrapper,
-tool detection, workdir resolution)."""
+title-based output naming, tool detection, workdir resolution)."""
 
 import os
 import sys
@@ -10,6 +10,178 @@ from unittest import mock
 from tests.helpers import assert_dies, capture as _capture, ns, stderr_of
 
 from ytpipeline import common
+
+
+class TestSafeName(unittest.TestCase):
+    def test_strips_filename_hostile_characters(self):
+        self.assertEqual(common.safe_name('a/b\\c:d*e?f"g<h>i|j#k^l[m]n'),
+                         "abcdefghijklmn")
+
+    def test_control_characters_stripped(self):
+        self.assertEqual(common.safe_name("bad\x00\x1fname"), "badname")
+
+    def test_collapses_whitespace_and_strips_dots(self):
+        self.assertEqual(common.safe_name("  A   B .. "), "A B")
+
+    def test_char_cap(self):
+        self.assertEqual(len(common.safe_name("x" * 200)), 90)
+        self.assertEqual(common.safe_name("x" * 200, max_len=7), "x" * 7)
+
+    def test_byte_cap_for_multibyte_titles(self):
+        # the byte cap must bite for titles made of 4-byte characters
+        name = common.safe_name("\U0001f600" * 200)  # emoji
+        self.assertLessEqual(len(name.encode("utf-8")), common.MAX_TITLE_BYTES)
+        self.assertTrue(name)  # never truncated to nothing
+
+    def test_only_hostile_characters_gives_empty(self):
+        self.assertEqual(common.safe_name("///???"), "")
+
+
+class TestTitledPath(unittest.TestCase):
+    """The collision rules shared by transcripts/*.txt and summaries/*.md."""
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory(prefix="ytp-name-")
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name) / "out"
+
+    def test_free_name_used_directly_and_dir_created(self):
+        p = common.titled_path(self.dir, "My Talk", "abcdefghijk", ".txt")
+        self.assertEqual(p, self.dir / "My Talk.txt")
+        self.assertTrue(self.dir.is_dir())
+
+    def test_same_video_keeps_its_own_file(self):
+        p = common.titled_path(self.dir, "My Talk", "abcdefghijk", ".txt")
+        p.write_text("video_id: abcdefghijk\n\nbody", encoding="utf-8")
+        self.assertEqual(
+            common.titled_path(self.dir, "My Talk", "abcdefghijk", ".txt"), p)
+
+    def test_different_video_gets_id_suffix(self):
+        p = common.titled_path(self.dir, "My Talk", "abcdefghijk", ".txt")
+        p.write_text("video_id: abcdefghijk\n\nbody", encoding="utf-8")
+        self.assertEqual(
+            common.titled_path(self.dir, "My Talk", "lmnopqrstuv", ".txt"),
+            self.dir / "My Talk (lmnopqrstuv).txt")
+
+    def test_suffixed_name_stays_with_its_video(self):
+        # once a video owns "Name (vid).txt", re-runs keep updating it
+        plain = common.titled_path(self.dir, "Talk", "abcdefghijk", ".txt")
+        plain.write_text("video_id: abcdefghijk\n\nbody", encoding="utf-8")
+        suffixed = common.titled_path(self.dir, "Talk", "lmnopqrstuv", ".txt")
+        suffixed.write_text("video_id: lmnopqrstuv\n\nbody", encoding="utf-8")
+        self.assertEqual(
+            common.titled_path(self.dir, "Talk", "lmnopqrstuv", ".txt"),
+            suffixed)
+
+    def test_file_without_video_id_is_treated_as_foreign(self):
+        p = common.titled_path(self.dir, "Talk", "abcdefghijk", ".txt")
+        p.write_text("no header at all", encoding="utf-8")
+        self.assertEqual(
+            common.titled_path(self.dir, "Talk", "abcdefghijk", ".txt"),
+            self.dir / "Talk (abcdefghijk).txt")
+
+    def test_no_video_id_never_disambiguates(self):
+        p = common.titled_path(self.dir, "Talk", "", ".txt")
+        p.write_text("no ids here", encoding="utf-8")
+        self.assertEqual(common.titled_path(self.dir, "Talk", "", ".txt"), p)
+
+    def test_quoted_frontmatter_id_is_read_too(self):
+        p = common.titled_path(self.dir, "Talk", "abcdefghijk", ".md")
+        p.write_text('---\nvideo_id: "abcdefghijk"\n---\n', encoding="utf-8")
+        self.assertEqual(
+            common.titled_path(self.dir, "Talk", "abcdefghijk", ".md"), p)
+        self.assertEqual(
+            common.titled_path(self.dir, "Talk", "lmnopqrstuv", ".md"),
+            self.dir / "Talk (lmnopqrstuv).md")
+
+
+class TestTranscriptLookup(unittest.TestCase):
+    """Locating a transcript by video id: title-named and legacy files."""
+
+    def setUp(self):
+        import tempfile
+        self._tmp = tempfile.TemporaryDirectory(prefix="ytp-look-")
+        self.addCleanup(self._tmp.cleanup)
+        self.dir = Path(self._tmp.name) / "transcripts"
+        self.dir.mkdir()
+
+    def test_title_named_file_found_via_header(self):
+        (self.dir / "Some Great Talk.txt").write_text(
+            "title: Some Great Talk\nvideo_id: abcdefghijk\n\nbody",
+            encoding="utf-8")
+        self.assertEqual(common.find_transcript("abcdefghijk", [str(self.dir)]),
+                         self.dir / "Some Great Talk.txt")
+
+    def test_suffixed_title_named_file_found_via_header(self):
+        (self.dir / "Some Great Talk (abcdefghijk).txt").write_text(
+            "title: Some Great Talk\nvideo_id: abcdefghijk\n\nbody",
+            encoding="utf-8")
+        self.assertEqual(common.find_transcript("abcdefghijk", [str(self.dir)]),
+                         self.dir / "Some Great Talk (abcdefghijk).txt")
+
+    def test_legacy_id_named_file_found_by_name(self):
+        (self.dir / "abcdefghijk.txt").write_text(
+            "video_id: abcdefghijk\n\nold", encoding="utf-8")
+        self.assertEqual(common.find_transcript("abcdefghijk", [str(self.dir)]),
+                         self.dir / "abcdefghijk.txt")
+
+    def test_headerless_legacy_file_found_by_name(self):
+        (self.dir / "abcdefghijk.txt").write_text("just words", encoding="utf-8")
+        self.assertEqual(common.find_transcript("abcdefghijk", [str(self.dir)]),
+                         self.dir / "abcdefghijk.txt")
+
+    def test_title_named_wins_over_legacy(self):
+        (self.dir / "abcdefghijk.txt").write_text(
+            "video_id: abcdefghijk\n\nold", encoding="utf-8")
+        (self.dir / "Some Great Talk.txt").write_text(
+            "title: Some Great Talk\nvideo_id: abcdefghijk\n\nnew",
+            encoding="utf-8")
+        self.assertEqual(common.find_transcript("abcdefghijk", [str(self.dir)]),
+                         self.dir / "Some Great Talk.txt")
+
+    def test_second_directory_searched(self):
+        other = self.dir.parent / "elsewhere"
+        other.mkdir()
+        (other / "Talk.txt").write_text("video_id: abcdefghijk\n\nbody",
+                                        encoding="utf-8")
+        self.assertEqual(
+            common.find_transcript("abcdefghijk", [str(self.dir), str(other)]),
+            other / "Talk.txt")
+
+    def test_missing_video_is_none(self):
+        self.assertIsNone(common.find_transcript("abcdefghijk", [str(self.dir)]))
+        self.assertIsNone(
+            common.find_transcript("abcdefghijk", [str(self.dir / "nope")]))
+
+    def test_index_skips_non_transcripts(self):
+        (self.dir / "notes.md").write_text("video_id: abcdefghijk",
+                                          encoding="utf-8")
+        (self.dir / "subdir.txt").mkdir()
+        self.assertEqual(common.transcripts_by_id(str(self.dir)), {})
+
+    def test_owned_transcripts_lists_every_copy(self):
+        # a video may legitimately have several files on disk: a legacy
+        # <id>.txt, a file under an older title, and the current one
+        legacy = self.dir / "abcdefghijk.txt"
+        legacy.write_text("video_id: abcdefghijk\n\nold", encoding="utf-8")
+        older = self.dir / "Old Title.txt"
+        older.write_text("title: Old Title\nvideo_id: abcdefghijk\n\nold",
+                         encoding="utf-8")
+        current = self.dir / "New Title.txt"
+        current.write_text("title: New Title\nvideo_id: abcdefghijk\n\nnew",
+                           encoding="utf-8")
+        self.assertEqual(set(common.owned_transcripts(str(self.dir),
+                                                      "abcdefghijk")),
+                         {legacy, older, current})
+        self.assertEqual(common.owned_transcripts(str(self.dir),
+                                                  "lmnopqrstuv"), [])
+
+    def test_owned_transcripts_includes_headerless_legacy_file(self):
+        legacy = self.dir / "abcdefghijk.txt"
+        legacy.write_text("no header", encoding="utf-8")
+        self.assertEqual(common.owned_transcripts(str(self.dir), "abcdefghijk"),
+                         [legacy])
 
 
 class TestVideoIdParsing(unittest.TestCase):

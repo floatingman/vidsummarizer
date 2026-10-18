@@ -12,6 +12,10 @@ Env vars (set by tests/helpers.py):
   YT_FAKE_LOG          append one JSON line per invocation ({tool, argv})
   YT_FAKE_FIXTURES     fixtures dir (metadata JSON + sample audio)
   YT_FAKE_YTDLP_META   override metadata JSON file
+  YT_FAKE_YTDLP_TITLES JSON {video_id: title} overriding each video's title
+                       (default: every video gets the fixture's one title,
+                       which the title-based output naming treats as a
+                       name collision between different videos)
   YT_FAKE_AUDIO        override the audio file copied as the "download"
   YT_FAKE_YTDLP_FAIL   if set: fail like a dead video (stderr + exit 1)
   YT_FAKE_YTDLP_FAIL_IDS          comma list: fail every call for these ids
@@ -64,6 +68,9 @@ if "-J" in argv:
     meta_file = os.environ.get("YT_FAKE_YTDLP_META") or fix / "meta" / "sample.json"
     meta = json.loads(Path(meta_file).read_text(encoding="utf-8"))
     meta["id"] = vid
+    titles = os.environ.get("YT_FAKE_YTDLP_TITLES")
+    if titles:
+        meta["title"] = json.loads(titles).get(vid, meta.get("title"))
     print(json.dumps(meta))
     sys.exit(0)
 
