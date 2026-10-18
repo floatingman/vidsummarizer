@@ -107,7 +107,7 @@ def cmd_transcribe(args):
     threads = resolve_threads(args, _in_flight(jobs, videos))
     if args.out and len(videos) > 1:
         die("-o/--out writes one transcript file; drop it for batch runs "
-            "(each video gets transcripts/<video_id>.txt)")
+            "(each video gets transcripts/<Title>.txt)")
 
     def one(video_id):
         return str(transcribe_video(_transcribe_ns(args, video_id, threads,
@@ -137,7 +137,7 @@ def cmd_run(args):
     jobs = args.jobs
     if args.transcript_out and len(videos) > 1:
         die("-o/--transcript-out writes one transcript file; drop it for "
-            "batch runs (each video gets transcripts/<video_id>.txt)")
+            "batch runs (each video gets transcripts/<Title>.txt)")
     if args.stdout and len(videos) > 1 and jobs > 1:
         log("* --stdout with several videos: using --jobs 1 so the notes "
             "print in order")

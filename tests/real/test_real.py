@@ -63,8 +63,11 @@ class TestRealWhisper(unittest.TestCase):
                      "-m", self.model, "-t", "4",
                      "--workdir", str(self.workdir)], env, timeout=600)
         self.assertEqual(r.returncode, 0, r.stderr)
-        out = self.workdir / "transcripts" / f"{VID}.txt"
-        self.assertTrue(out.exists())
+        # title-based naming: the transcript is named after the video title
+        files = list((self.workdir / "transcripts").glob("*.txt"))
+        self.assertEqual(len(files), 1)
+        out = files[0]
+        self.assertIn(f"video_id: {VID}", out.read_text(encoding="utf-8"))
         text = out.read_text(encoding="utf-8")
         # real transcription of the real speech fixture: substantial body
         header, body = text.split("\n\n", 1)
@@ -107,8 +110,11 @@ class TestLiveYouTube(unittest.TestCase):
                      "-m", self.model, "--timestamps",
                      "--workdir", str(self.workdir)], env, timeout=900)
         self.assertEqual(r.returncode, 0, r.stderr)
-        text = (self.workdir / "transcripts" / f"{self.LIVE_VID}.txt"
-                ).read_text(encoding="utf-8")
+        # the real video's real title names the file; find it by its header
+        files = list((self.workdir / "transcripts").glob("*.txt"))
+        self.assertEqual(len(files), 1)
+        text = files[0].read_text(encoding="utf-8")
+        self.assertIn(f"video_id: {self.LIVE_VID}", text)
         self.assertIn("title:", text)
         self.assertRegex(text, r"\[\d\d:\d\d\] ")  # timestamps requested
         self.assertGreaterEqual(len(text.split()), 10)

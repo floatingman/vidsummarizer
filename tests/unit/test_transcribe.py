@@ -430,13 +430,95 @@ class TestTranscribeVideo(unittest.TestCase):
     def test_writes_transcript_and_keeps_audio_by_default(self):
         self._stub()
         out = transcribe.transcribe_video(self.opts(), self.workdir)
-        self.assertEqual(out, self.workdir / "transcripts" / f"{VID}.txt")
+        self.assertEqual(out, self.workdir / "transcripts" / "T.txt")
         text = out.read_text()
         self.assertIn("title: T", text)
         self.assertIn(f"video_id: {VID}", text)
         self.assertIn("language: en", text)  # detected by whisper
         self.assertIn("The quick brown fox", text)
         self.assertTrue(self.audio.exists())  # kept
+
+    def _seed_transcript(self, name, video_id):
+        tdir = self.workdir / "transcripts"
+        tdir.mkdir(parents=True, exist_ok=True)
+        p = tdir / name
+        p.write_text(f"title: T\nvideo_id: {video_id}\n\nold body\n",
+                     encoding="utf-8")
+        return p
+
+    def test_title_sanitized_into_filename(self):
+        self._stub()
+        with mock.patch("ytpipeline.transcribe.fetch_metadata",
+                        return_value={"title": 'What? A "great" talk: 1/2',
+                                      "duration": 61}):
+            out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out.name, "What A great talk 12.txt")
+        self.assertIn(f"video_id: {VID}", out.read_text())  # id survives
+
+    def test_runaway_title_capped_in_filename(self):
+        self._stub()
+        with mock.patch("ytpipeline.transcribe.fetch_metadata",
+                        return_value={"title": "L" * 300, "duration": 61}):
+            out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(len(out.stem), 90)
+        self.assertIn(f"video_id: {VID}", out.read_text())
+
+    def test_empty_title_falls_back_to_video_id(self):
+        self._stub()
+        with mock.patch("ytpipeline.transcribe.fetch_metadata",
+                        return_value={"title": "", "duration": 61}):
+            out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out, self.workdir / "transcripts" / f"{VID}.txt")
+
+    def test_same_video_rerun_updates_its_own_file(self):
+        self._stub()
+        existing = self._seed_transcript("T.txt", VID)
+        out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out, existing)
+        self.assertIn("The quick brown fox", existing.read_text())  # updated
+        self.assertEqual(len(list((self.workdir / "transcripts").glob("*.txt"))), 1)
+
+    def test_same_title_different_video_gets_id_suffix(self):
+        self._stub()
+        self._seed_transcript("T.txt", "otherVideo1")  # foreign owner
+        out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out, self.workdir / "transcripts" / f"T ({VID}).txt")
+        self.assertIn(f"video_id: {VID}", out.read_text())
+        # the other video's file is untouched
+        self.assertIn("video_id: otherVideo1",
+                      (self.workdir / "transcripts" / "T.txt").read_text())
+
+    def test_suffixed_name_stays_with_its_video_on_rerun(self):
+        self._stub()
+        self._seed_transcript("T.txt", "otherVideo1")
+        suffixed = self._seed_transcript(f"T ({VID}).txt", VID)
+        out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out, suffixed)
+        self.assertIn("The quick brown fox", suffixed.read_text())
+        self.assertEqual(len(list((self.workdir / "transcripts").glob("*.txt"))), 2)
+
+    def test_legacy_id_named_file_replaced_not_duplicated(self):
+        self._stub()
+        legacy = self._seed_transcript(f"{VID}.txt", VID)
+        out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out, self.workdir / "transcripts" / "T.txt")
+        self.assertFalse(legacy.exists())  # superseded by the title-named one
+        self.assertEqual(len(list((self.workdir / "transcripts").glob("*.txt"))), 1)
+
+    def test_renamed_title_replaces_the_old_title_named_file(self):
+        self._stub()
+        old = self._seed_transcript("Old Title.txt", VID)
+        out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out, self.workdir / "transcripts" / "T.txt")
+        self.assertFalse(old.exists())  # same video, older title: superseded
+        self.assertEqual(len(list((self.workdir / "transcripts").glob("*.txt"))), 1)
+
+    def test_other_videos_files_are_never_touched(self):
+        self._stub()
+        foreign = self._seed_transcript("T.txt", "otherVideo1")
+        transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertTrue(foreign.exists())
+        self.assertIn("video_id: otherVideo1", foreign.read_text())
 
     def test_no_keep_audio_deletes_mp3(self):
         self._stub()

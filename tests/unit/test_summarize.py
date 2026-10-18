@@ -132,6 +132,14 @@ class TestTextHelpers(unittest.TestCase):
     def test_safe_name_max_len(self):
         self.assertEqual(len(safe_name("x" * 200, max_len=90)), 90)
 
+    def test_safe_name_byte_cap(self):
+        # 90 CJK chars would be 270 UTF-8 bytes: the byte cap must trim
+        # further so the filename stays within OS limits even with the
+        # " (<id>)" suffix added
+        name = safe_name("\u4e2d" * 200)  # 3-byte chars
+        self.assertLessEqual(len(name.encode("utf-8")), 200)
+        self.assertLess(len(name), 90)
+
     def test_yaml_str_is_json_double_quoted(self):
         self.assertEqual(yaml_str('he said "hi"'), '"he said \\"hi\\""')
         self.assertEqual(yaml_str("line\nbreak"), '"line\\nbreak"')
@@ -336,21 +344,78 @@ class TestResolveTranscripts(unittest.TestCase):
         self.dir = Path(self._tmp.name)
         self.tdir = self.dir / "transcripts"
         self.tdir.mkdir()
-        (self.tdir / "abcdefghijk.txt").write_text("title: x\n\nbody")
         self.o = ns(transcripts_dirs=[str(self.tdir)])
 
-    def test_existing_file_passthrough(self):
-        p = str(self.tdir / "abcdefghijk.txt")
-        self.assertEqual(resolve_transcripts(self.o, [p]), [p])
+    def seed(self, name, video_id=None, title=None):
+        text = ""
+        if title:
+            text += f"title: {title}\n"
+        if video_id:
+            text += f"video_id: {video_id}\n"
+        if text:
+            text += "\n"
+        path = self.tdir / name
+        path.write_text(text + "body", encoding="utf-8")
+        return path
 
-    def test_bare_id_resolved(self):
+    def test_existing_file_passthrough(self):
+        p = self.seed("abcdefghijk.txt", video_id="abcdefghijk")
+        self.assertEqual(resolve_transcripts(self.o, [str(p)]), [str(p)])
+
+    def test_bare_id_resolves_title_named_transcript(self):
+        p = self.seed("A Great Talk.txt", video_id="abcdefghijk",
+                      title="A Great Talk")
         self.assertEqual(resolve_transcripts(self.o, ["abcdefghijk"]),
-                         [str(self.tdir / "abcdefghijk.txt")])
+                         [str(p)])
+
+    def test_bare_id_resolves_id_suffixed_transcript(self):
+        p = self.seed("A Great Talk (abcdefghijk).txt", video_id="abcdefghijk")
+        self.assertEqual(resolve_transcripts(self.o, ["abcdefghijk"]),
+                         [str(p)])
+
+    def test_bare_id_resolves_legacy_id_named_transcript(self):
+        # transcripts written by older versions keep working untouched
+        p = self.seed("abcdefghijk.txt", video_id="abcdefghijk")
+        self.assertEqual(resolve_transcripts(self.o, ["abcdefghijk"]),
+                         [str(p)])
+
+    def test_legacy_headerless_transcript_resolved_by_name(self):
+        p = self.seed("abcdefghijk.txt")
+        self.assertEqual(resolve_transcripts(self.o, ["abcdefghijk"]),
+                         [str(p)])
+
+    def test_bare_id_skips_legacy_name_with_foreign_header(self):
+        # a file named <id>.txt whose header names another video is that
+        # video's title-named output (its title just looks like an id)
+        self.seed("abcdefghijk.txt", video_id="zzzzzzzzzzz")
+        assert_dies(self, lambda: resolve_transcripts(self.o, ["abcdefghijk"]),
+                    pattern="no transcript")
+
+
+    def test_ensure_video_id_infers_legacy_id_from_the_filename(self):
+        meta = {}
+        self.assertEqual(summarize.ensure_video_id(meta, "d/abcdefghijk.txt"),
+                         "abcdefghijk")
+        self.assertEqual(meta["video_id"], "abcdefghijk")  # note + bookkeeping
+        meta = {"video_id": "zzzzzzzzzzz"}
+        self.assertEqual(summarize.ensure_video_id(meta, "d/abcdefghijk.txt"),
+                         "zzzzzzzzzzz")  # the header id always wins
+        meta = {}
+        self.assertEqual(summarize.ensure_video_id(meta, "d/My Talk.txt"), "")
+        self.assertNotIn("video_id", meta)
+
+
+    def test_title_named_wins_over_legacy_duplicate(self):
+        self.seed("abcdefghijk.txt", video_id="abcdefghijk")
+        titled = self.seed("A Great Talk.txt", video_id="abcdefghijk")
+        self.assertEqual(resolve_transcripts(self.o, ["abcdefghijk"]),
+                         [str(titled)])
 
     def test_url_resolved(self):
+        p = self.seed("A Great Talk.txt", video_id="abcdefghijk")
         self.assertEqual(
             resolve_transcripts(self.o, ["https://youtu.be/abcdefghijk"]),
-            [str(self.tdir / "abcdefghijk.txt")])
+            [str(p)])
 
     def test_missing_transcript_dies(self):
         assert_dies(self, lambda: resolve_transcripts(self.o, ["zzzzzzzzzzz"]),
@@ -390,16 +455,16 @@ class TestOutputPath(unittest.TestCase):
 
     def test_title_sanitized(self):
         p = output_path(str(self.out), {"title": 'a/b: c?'}, "stem")
-        self.assertEqual(p, str(self.out / "ab c.md"))  # forbidden chars
+        self.assertEqual(p, self.out / "ab c.md")  # forbidden chars
         # removed, real whitespace kept
 
     def test_stem_used_when_no_title(self):
         p = output_path(str(self.out), {}, "the stem")
-        self.assertEqual(p, str(self.out / "the stem.md"))
+        self.assertEqual(p, self.out / "the stem.md")
 
     def test_video_id_used_when_no_title_or_stem(self):
         p = output_path(str(self.out), {"video_id": "abcdefghijk"}, "")
-        self.assertEqual(p, str(self.out / "abcdefghijk.md"))
+        self.assertEqual(p, self.out / "abcdefghijk.md")
 
     def test_same_name_different_video_disambiguated(self):
         existing = self.out / "Talk.md"
@@ -407,7 +472,7 @@ class TestOutputPath(unittest.TestCase):
         existing.write_text('---\nvideo_id: "abcdefghijk"\n---\n')
         p = output_path(str(self.out), {"title": "Talk",
                                         "video_id": "lmnopqrstuv"}, "x")
-        self.assertEqual(p, str(self.out / "Talk (lmnopqrstuv).md"))
+        self.assertEqual(p, self.out / "Talk (lmnopqrstuv).md")
 
     def test_same_video_overwrites(self):
         existing = self.out / "Talk.md"
@@ -415,7 +480,12 @@ class TestOutputPath(unittest.TestCase):
         existing.write_text('---\nvideo_id: "abcdefghijk"\n---\n')
         p = output_path(str(self.out), {"title": "Talk",
                                         "video_id": "abcdefghijk"}, "x")
-        self.assertEqual(p, str(existing))
+        self.assertEqual(p, existing)
+
+    def test_runaway_title_capped(self):
+        p = output_path(str(self.out), {"title": "L" * 300,
+                                        "video_id": "abcdefghijk"}, "x")
+        self.assertEqual(len(p.stem), 90)
 
 
 # --------------------------------------------------------------------------- #

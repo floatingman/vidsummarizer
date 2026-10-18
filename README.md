@@ -139,10 +139,12 @@ missing, so it can gate automated setups.
 ./yt-pipeline run --batch watchlist.txt -j 3                 # ...or from a file, 3 at a time
 ```
 
-Downloads the audio, writes `transcripts/<video_id>.txt`, then the summary
-note into `summaries/<Title>.md`, and prints what it did to stderr. On the
-reference machine (Ryzen 7 5850U, CPU-only) a 21-minute video takes about
-7 minutes end to end (2 min whisper.cpp + 5 min qwen3.6 summarization).
+Downloads the audio, writes the transcript to `transcripts/<Title>.txt`,
+then the summary note into `summaries/<Title>.md` (both files are named
+after the video's title; see "Output formats"), and prints what it did to
+stderr. On the reference machine (Ryzen 7 5850U, CPU-only) a 21-minute
+video takes about 7 minutes end to end (2 min whisper.cpp + 5 min qwen3.6
+summarization).
 
 ### Batch processing (many videos at once)
 
@@ -177,7 +179,7 @@ prefixed with the video id so concurrent videos stay readable:
 [jNQXAC9IVRw] 35 words -> single pass (qwen3.6)
 [dQw4w9WgXcQ] * transcribing dQw4w9WgXcQ.mp3 with ggml-small.bin (lang=auto)
 [jNQXAC9IVRw] wrote .../summaries/Me at the zoo.md (44 words, 30s)
-[dQw4w9WgXcQ] * wrote .../transcripts/dQw4w9WgXcQ.txt (494 words, 3 paragraphs)
+[dQw4w9WgXcQ] * wrote .../transcripts/Rick Astley - Never Gonna Give You Up.txt (494 words, 3 paragraphs)
 ...
 * batch finished in 01:45: 2/2 video(s) ok
 ```
@@ -377,7 +379,7 @@ Transcription stage (`run`, `transcribe`):
 
 | Option | Default | Description |
 |---|---|---|
-| `-o, --out FILE` / `-o, --transcript-out FILE` | `<workdir>/transcripts/<id>.txt` | output transcript path (single video only) |
+| `-o, --out FILE` / `-o, --transcript-out FILE` | `<workdir>/transcripts/<Title>.txt` | output transcript path (single video only) |
 | `-m, --model PATH` | `<workdir>/models/ggml-small.bin` | whisper GGML model; auto-downloaded if missing |
 | `--model-url URL` | HuggingFace `ggerganov/whisper.cpp` | override download URL for the model |
 | `-l, --lang LANG` | `auto` | spoken language (`en`, `de`, ...); `auto` lets whisper detect |
@@ -442,11 +444,14 @@ Everything lives in one work directory, resolved in this order:
 Old data can be adopted by copying the old projects' `models/`,
 `audio/`, `transcripts/` and `summaries/` folders into the workdir; file
 formats are unchanged, and the summarizer still accepts transcripts written
-by the old `yt-transcribe` (and vice versa).
+by the old `yt-transcribe` (and vice versa). Old id-named transcripts
+(`transcripts/<video_id>.txt`) keep working: they are found by video id
+like the new title-named ones, and re-transcribing a video replaces its
+id-named file with the title-named one.
 
-## Output formats (unchanged from the original tools)
+## Output formats
 
-**Transcript** (`transcripts/<video_id>.txt`): UTF-8 plain text, a short
+**Transcript** (`transcripts/<Title>.txt`): UTF-8 plain text, a short
 `key: value` header (`title`, `channel`, `upload_date`, `duration`,
 `video_id`, `url`, `language`, `model`, `tool`), one blank line, then the
 transcript as paragraphs split at silence gaps of >= 1.5 s (soft cap ~280
@@ -464,9 +469,24 @@ the body instead takes that style's shape (see "Summary styles"), and the
 the note. The summary body is capped at 500 words (`--max-words`, or the
 selected style's own cap); if the model runs over it is asked once for a
 tighter rewrite, then trimmed at a sentence boundary. Long transcripts are
-summarized map-reduce style (per-chunk notes, then a final pass). The
-note's filename strips characters Obsidian forbids; on a name clash
-between different videos the video id is appended.
+summarized map-reduce style (per-chunk notes, then a final pass).
+
+**File naming** (both outputs): files are named after the video's title,
+made filesystem-safe: characters hostile to filenames (path separators,
+`\\/:*?"<>|#^[]`, control characters, and what Obsidian forbids in note
+names) are dropped, whitespace is collapsed, surrounding dots are trimmed,
+and the stem is capped at 90 characters / 200 UTF-8 bytes. The video id
+stays discoverable through the `video_id` in the header and frontmatter,
+so lookups by id keep working (`summarize <id>`, `summarize --all`); the
+audio cache (`audio/<video_id>.mp3`) keeps its id-based name, which never
+collides. Two different videos whose sanitized titles collide never
+overwrite each other: the second one gets ` (<video_id>)` appended to its
+filename, and re-running a video always updates its own single file
+(name resolution and the write are serialized, both across the workers of
+one batch and across concurrent yt-pipeline processes sharing the work
+directory; the write itself is an atomic rename, so a concurrent reader
+never sees a half-written file). Each output directory also gets a hidden,
+empty `.yt-pipeline.lock` file, the mutex behind that serialization.
 
 ## Differences from the original two tools
 
