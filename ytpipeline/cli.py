@@ -389,8 +389,9 @@ def build_parser():
 # --------------------------------------------------------------------------- #
 
 def cmd_summarize(args):
-    from .summarize import (output_path, parse_transcript, resolve_transcripts,
-                            summarized_video_ids, summarize_targets)
+    from .summarize import (ensure_video_id, output_path, parse_transcript,
+                            resolve_transcripts, summarized_video_ids,
+                            summarize_targets)
     from .common import die, log, transcripts_by_id
     workdir = resolve_workdir(args.workdir)
     args.workdir = str(workdir)
@@ -425,7 +426,9 @@ def cmd_summarize(args):
         for f in files:
             meta, _ = parse_transcript(open(f, encoding="utf-8",
                                             errors="replace").read())
-            vid = meta.get("video_id", "")
+            # a headerless pre-2.3 <id>.txt is identified by its filename,
+            # so it deduplicates and counts as done like any other file
+            vid = ensure_video_id(meta, f)
             if vid:
                 if vid in done and not args.force:
                     skipped_done += 1

@@ -27,8 +27,9 @@ import urllib.request
 from datetime import datetime, timezone
 
 from . import VERSION
-from .common import (die, find_transcript, log, output_dir_lock, safe_name,
-                     titled_path, warn, write_text_atomic)  # safe_name is re-exported
+from .common import (die, find_transcript, legacy_video_id, log,
+                     output_dir_lock, safe_name, titled_path, warn,
+                     write_text_atomic)  # safe_name is re-exported
 
 TOOL = f"yt-pipeline {VERSION} (local LLM via Ollama)"
 
@@ -127,6 +128,18 @@ def parse_transcript(text):
         return {}, text.strip()
     body = "\n".join(lines[i:]).strip()
     return meta, body
+
+
+def ensure_video_id(meta, path):
+    """The transcript's video id: the header's, or the stem of a headerless
+    pre-2.3 <id>.txt file. Fills in meta['video_id'] so the note's
+    frontmatter, its output name and the already-summarized bookkeeping all
+    agree on the video; returns '' when the file carries no id."""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    vid = meta.get("video_id") or legacy_video_id(stem) or ""
+    if vid:
+        meta["video_id"] = vid
+    return vid
 
 
 def transcript_language_instruction(meta, body):
@@ -378,7 +391,7 @@ def summarize_transcript(ollama, path, opts):
     meta, body = parse_transcript(raw)
     if not body:
         die(f"{path}: transcript is empty")
-    vid = meta.get("video_id", "")
+    vid = ensure_video_id(meta, path)
     tag = vid or os.path.basename(path)
     ps = prompts_for(opts)
     # a style may set its own word cap; an explicit --max-words always wins
@@ -594,6 +607,7 @@ def summarize_targets(paths, opts, ollama=None):
         else:
             meta, _ = parse_transcript(open(path, encoding="utf-8",
                                             errors="replace").read())
+            ensure_video_id(meta, path)  # legacy <id>.txt: name notes by id
             with output_dir_lock(opts.out):  # never race another writer
                 out = output_path(opts.out, meta,
                                   os.path.splitext(os.path.basename(path))[0])

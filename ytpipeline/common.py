@@ -230,6 +230,14 @@ def video_id_in_file(path):
     return m.group(1) if m else None
 
 
+def legacy_video_id(stem):
+    """The video id of a pre-2.3 id-named transcript: a bare 11-character
+    stem. Anything else is a title, not an id (a title may even look like
+    another video's id, but files this pipeline writes carry a header id,
+    which always wins over the filename)."""
+    return stem if ID_RE.match(stem) else None
+
+
 def titled_path(directory, base, video_id, ext):
     """Path for a title-named output file, so two different videos never
     silently overwrite each other:
@@ -242,7 +250,8 @@ def titled_path(directory, base, video_id, ext):
       so re-runs keep updating it. In the contrived case where even that
       name is owned by yet another video (a title that literally ends in
       " (<id>)"), a " (2)", " (3)" ... counter is appended until a name
-      is free or this video's own.
+      is free or this video's own; if 100 candidates are all owned by
+      other videos, the search dies instead of overwriting one of them.
 
     Callers hold output_dir_lock() around resolution and write, so the
     exists-checks cannot race another writer.
@@ -254,11 +263,14 @@ def titled_path(directory, base, video_id, ext):
         attempt = 0
         while path.exists() and video_id_in_file(path) != video_id:
             attempt += 1
+            if attempt > 99:
+                # pathological (every candidate name is another video's
+                # output): fail instead of returning an unchecked path
+                die(f"no free output name for {base}{ext} in {directory} "
+                    f"after {attempt} candidates; remove some of those files")
             stem = f"{base} ({video_id})" if attempt == 1 \
                 else f"{base} ({video_id}) ({attempt})"
             path = directory / f"{stem}{ext}"
-            if attempt > 99:  # pathological: stop looking, take the name
-                break
     return path
 
 
@@ -299,7 +311,9 @@ def write_text_atomic(path, content):
     transcript or note; on failure the temp file is cleaned up and the
     previous content of `path`, if any, survives."""
     path = Path(path)
-    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    # short, fixed-length temp name: deriving it from the destination
+    # name would push a legal ~255-byte basename past the limit
+    tmp = path.with_name(f".ytp-{os.getpid()}-{threading.get_ident()}.tmp")
     try:
         tmp.write_text(content, encoding="utf-8")
         os.replace(tmp, path)  # atomic on the same directory/filesystem
@@ -310,8 +324,9 @@ def write_text_atomic(path, content):
 def _transcript_entries(directory):
     """Yield (video_id, rank, path) for every transcript in a directory:
     title-named files are matched by the video_id in their header, legacy
-    <id>.txt files by their name. rank orders a video's files: title-named
-    beats legacy, then newest first."""
+    <id>.txt files by their header id or (when headerless) their bare
+    name. rank orders a video's files: title-named beats legacy, then
+    newest first."""
     if not os.path.isdir(directory):
         return
     for fn in sorted(os.listdir(directory)):
@@ -319,6 +334,10 @@ def _transcript_entries(directory):
         if not fn.endswith(".txt") or not path.is_file():
             continue
         vid = video_id_in_file(path)
+        if not vid:
+            # a pre-2.3 <id>.txt may carry no header; its bare stem is
+            # the id (files this pipeline writes always have a header id)
+            vid = legacy_video_id(path.stem)
         if not vid:
             continue
         try:
@@ -341,27 +360,24 @@ def transcripts_by_id(directory):
 
 def owned_transcripts(directory, video_id):
     """Every transcript file of one video in a directory: title-named files
-    (matched via their header) and the legacy <id>.txt alike."""
-    owned = [path for vid, _, path in _transcript_entries(directory)
-             if vid == video_id]
-    legacy = Path(directory) / f"{video_id}.txt"
-    if legacy.is_file() and legacy not in owned:
-        owned.append(legacy)
-    return owned
+    (matched via their header id) and the legacy <id>.txt alike (by header
+    id or, when headerless, by name). A file named <video_id>.txt whose
+    header names a different video is that video's title-named output (its
+    title just looks like an id) and is not owned by video_id."""
+    return [path for vid, _, path in _transcript_entries(directory)
+            if vid == video_id]
 
 
 def find_transcript(video_id, directories):
     """The transcript file for a video id, searching the directories in
     order. Understands both the current title-based names (matched via the
-    header) and the pre-2.3 id-based <id>.txt files (matched by name, even
-    when they carry no header). Prefers the title-named file when a video
-    has both."""
+    header) and the pre-2.3 id-based <id>.txt files (by their header id
+    or, when headerless, their name). A file named <video_id>.txt whose
+    header names a different video belongs to that video, so the search
+    continues into the later directories. Prefers the title-named file
+    when a video has both."""
     for d in directories:
         hit = transcripts_by_id(d).get(video_id)
-        if hit is None:
-            legacy = Path(d) / f"{video_id}.txt"
-            if legacy.is_file():
-                hit = legacy
         if hit is not None:
             return hit
     return None

@@ -384,6 +384,27 @@ class TestResolveTranscripts(unittest.TestCase):
         self.assertEqual(resolve_transcripts(self.o, ["abcdefghijk"]),
                          [str(p)])
 
+    def test_bare_id_skips_legacy_name_with_foreign_header(self):
+        # a file named <id>.txt whose header names another video is that
+        # video's title-named output (its title just looks like an id)
+        self.seed("abcdefghijk.txt", video_id="zzzzzzzzzzz")
+        assert_dies(self, lambda: resolve_transcripts(self.o, ["abcdefghijk"]),
+                    pattern="no transcript")
+
+
+    def test_ensure_video_id_infers_legacy_id_from_the_filename(self):
+        meta = {}
+        self.assertEqual(summarize.ensure_video_id(meta, "d/abcdefghijk.txt"),
+                         "abcdefghijk")
+        self.assertEqual(meta["video_id"], "abcdefghijk")  # note + bookkeeping
+        meta = {"video_id": "zzzzzzzzzzz"}
+        self.assertEqual(summarize.ensure_video_id(meta, "d/abcdefghijk.txt"),
+                         "zzzzzzzzzzz")  # the header id always wins
+        meta = {}
+        self.assertEqual(summarize.ensure_video_id(meta, "d/My Talk.txt"), "")
+        self.assertNotIn("video_id", meta)
+
+
     def test_title_named_wins_over_legacy_duplicate(self):
         self.seed("abcdefghijk.txt", video_id="abcdefghijk")
         titled = self.seed("A Great Talk.txt", video_id="abcdefghijk")

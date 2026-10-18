@@ -448,6 +448,36 @@ class TestSummarize(E2ETest):
         self.assertTrue(
             (self.workdir / "summaries" / "Fixture Talk - Testing Pipelines.md").exists())
 
+    def test_summarize_all_dedupes_headerless_legacy_copy(self):
+        # a pre-2.3 <id>.txt without a header is still recognized as the
+        # video's file by its name and deduplicated against the
+        # title-named copy
+        legacy = self.seed_transcript(legacy=True)
+        legacy.write_text("STALE HEADERLESS BODY\n", encoding="utf-8")
+        self.seed_transcript()
+        r = self.cli("summarize", "--all", *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("1 duplicate copy", r.stderr)
+        self.assertEqual(len(self.ollama.chat_requests), 1)
+        user = self.ollama.chat_requests[-1]["messages"][1]["content"]
+        self.assertNotIn("STALE HEADERLESS BODY", user)  # title-named won
+
+    def test_summarize_all_marks_headerless_legacy_done_by_id(self):
+        # the note for a headerless legacy transcript carries the id
+        # inferred from its filename, so a re-run does not summarize it again
+        legacy = self.seed_transcript(legacy=True)
+        legacy.write_text("plain body, no header\n", encoding="utf-8")
+        r = self.cli("summarize", "--all", *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        note = self.workdir / "summaries" / "FxTureVid01.md"
+        self.assertTrue(note.exists())
+        self.assertIn('video_id: "FxTureVid01"', note.read_text(encoding="utf-8"))
+        r = self.cli("summarize", "--all", *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("1 already summarized", r.stderr)
+        self.assertEqual(len(self.ollama.chat_requests), 1)  # only run one
+
+
     def test_summarize_all_counts_duplicates_separately_from_done(self):
         # 4 transcripts covering 3 videos, nothing summarized yet: the
         # deduped copy must not be reported as "already summarized"
