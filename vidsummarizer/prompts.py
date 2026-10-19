@@ -42,7 +42,7 @@ Where the files live, in order:
 1. --prompts-dir DIR           (summarize/run/benchmark/prompts commands)
 2. $YT_PROMPTS_DIR
 3. <workdir>/prompts            if it contains any *.json
-4. the copy packed into the executable (ytpipeline/prompts in the zipapp)
+4. the copy packed into the executable (vidsummarizer/prompts in the zipapp)
 5. <repo>/prompts               when running from a source checkout
 
 The *active* variant (the one plain `run`/`summarize` use) is named in the
@@ -162,7 +162,7 @@ def _has_variants(d):
 def _packaged_dir():
     """The prompts/ copy packed next to the package (inside the zipapp)."""
     try:
-        d = importlib.resources.files("ytpipeline").joinpath("prompts")
+        d = importlib.resources.files("vidsummarizer").joinpath("prompts")
         return d if _has_variants(d) else None
     except Exception:
         return None

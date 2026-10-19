@@ -6,7 +6,7 @@ video_id: BenchOvervie1
 url: https://www.youtube.com/watch?v=BenchOvervie1
 language: en
 model: ggml-small.bin
-tool: yt-pipeline 2.1.0 (local whisper.cpp)
+tool: vidsummarizer 2.1.0 (local whisper.cpp)
 
 Today I want to tell a small story about how a hobby project grew, because I think the pattern is more common than the project itself.
 

@@ -6,7 +6,7 @@ video_id: BenchHowto01
 url: https://www.youtube.com/watch?v=BenchHowto01
 language: en
 model: ggml-small.bin
-tool: yt-pipeline 2.1.0 (local whisper.cpp)
+tool: vidsummarizer 2.1.0 (local whisper.cpp)
 
 In this video I walk through getting a free TLS certificate onto a small web server, start to finish, so you can do the same on a Saturday morning.
 

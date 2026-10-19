@@ -228,7 +228,7 @@ def build_output(meta, video_id, language, model, paragraphs):
         ("url", watch_url(video_id)),
         ("language", language),
         ("model", model.name),
-        ("tool", f"yt-pipeline {VERSION} (local whisper.cpp)"),
+        ("tool", f"vidsummarizer {VERSION} (local whisper.cpp)"),
     ]
     if len(header[2][1]) == 8:  # YYYYMMDD -> YYYY-MM-DD
         d = header[2][1]
@@ -298,7 +298,7 @@ def transcribe_video(t, workdir):
         # stays discoverable via the header, so lookups by id keep working)
         title = str(meta.get("title") or "").strip()
         # the lock spans resolution, write and supersession cleanup, so
-        # neither same-process workers nor another yt-pipeline process can
+        # neither same-process workers nor another vidsummarizer process can
         # race the exists-checks against our write
         with output_dir_lock(workdir / "transcripts"):
             out = titled_path(workdir / "transcripts",

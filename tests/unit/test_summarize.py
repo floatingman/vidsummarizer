@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.summarize (Ollama stage): transcript parsing,
+"""Unit tests for vidsummarizer.summarize (Ollama stage): transcript parsing,
 chunking, markdown cleanup, note building, the Ollama HTTP client (against
 an in-process fake server), and file selection/output logic."""
 
@@ -11,8 +11,8 @@ from unittest import mock
 from tests.helpers import (FakeOllamaServer, assert_dies, capture, ns,
                            stderr_of)
 
-from ytpipeline import summarize
-from ytpipeline.summarize import (Ollama, build_note, chunk_text,
+from vidsummarizer import summarize
+from vidsummarizer.summarize import (Ollama, build_note, chunk_text,
                                   clean_markdown, count_words, gen_options,
                                   output_path, parse_transcript,
                                   resolve_transcripts, safe_name, sentences,
@@ -218,7 +218,7 @@ class TestLanguageInstruction(unittest.TestCase):
                          "transcript.")
 
     def test_opts_override(self):
-        from ytpipeline.summarize import language_instruction
+        from vidsummarizer.summarize import language_instruction
         instr = language_instruction(opts(lang="de"), {}, "body")
         self.assertIn("German", instr)
         instr = language_instruction(opts(lang="Klingon"), {}, "body")
@@ -302,7 +302,7 @@ class TestBuildNote(unittest.TestCase):
             "duration": "01:01", "video_id": "FxTureVid01",
             "url": "https://www.youtube.com/watch?v=FxTureVid01",
             "language": "en", "model": "ggml-small.bin",
-            "tool": "yt-pipeline 2.1.0 (local whisper.cpp)"}
+            "tool": "vidsummarizer 2.1.0 (local whisper.cpp)"}
 
     def test_note_structure(self):
         note = build_note(self.META["title"], self.META, STUB_NOTE, 12,
@@ -322,7 +322,7 @@ class TestBuildNote(unittest.TestCase):
         self.assertIn("[Watch on YouTube](https://www.youtube.com/watch?v=FxTureVid01)",
                       lines)
         self.assertIn("## Overview", lines)
-        self.assertIn("generated locally by yt-pipeline", note)
+        self.assertIn("generated locally by vidsummarizer", note)
         self.assertIn("qwen3.6", note)
 
     def test_missing_meta_lines_omitted(self):
@@ -609,7 +609,7 @@ class TestSummarizeTargets(unittest.TestCase):
 
     def test_failure_of_one_does_not_kill_the_rest(self):
         stub = StubOllama()
-        with mock.patch("ytpipeline.summarize.summarize_transcript",
+        with mock.patch("vidsummarizer.summarize.summarize_transcript",
                         side_effect=[RuntimeError("boom"),
                                      (STUB_NOTE, {"video_id": "SecndVid001",
                                                   "words": 10, "elapsed": 0.1,
@@ -633,7 +633,7 @@ class TestStyles(unittest.TestCase):
         self._tmp = tempfile.TemporaryDirectory(prefix="ytp-style-")
         self.addCleanup(self._tmp.cleanup)
         self.dir = Path(self._tmp.name)
-        from ytpipeline.prompts import write_variant
+        from vidsummarizer.prompts import write_variant
         write_variant(self.dir, MINI_STYLE)
         # a plain variant so the default (active) path also works in this dir
         shutil.copyfile(REPO_PROMPTS / "v1-baseline.json",
@@ -702,7 +702,7 @@ class TestStyles(unittest.TestCase):
         self.assertIn("v1-baseline", err)  # plain variants listed too
 
     def test_pinned_prompts_beat_style_selection(self):
-        from ytpipeline.prompts import load_variant
+        from vidsummarizer.prompts import load_variant
         pinned = load_variant(self.dir, "v1-baseline")
         stub = StubOllama()
         ((note, info), _) = capture(lambda: summarize_transcript(
@@ -748,8 +748,8 @@ class TestOllamaClient(unittest.TestCase):
     def test_autostart_spawns_serve_and_waits(self):
         pings = iter([False, False, True])
         with mock.patch.object(Ollama, "_ping", side_effect=lambda: next(pings)), \
-             mock.patch("ytpipeline.summarize.subprocess.Popen") as popen, \
-             mock.patch("ytpipeline.summarize.time.sleep") as sleep:
+             mock.patch("vidsummarizer.summarize.subprocess.Popen") as popen, \
+             mock.patch("vidsummarizer.summarize.time.sleep") as sleep:
             Ollama("http://127.0.0.1:9", "m", 1)
         popen.assert_called_once()
         self.assertEqual(popen.call_args[0][0], ["ollama", "serve"])
@@ -787,7 +787,7 @@ class TestOllamaClient(unittest.TestCase):
     def test_chat_think_fallback_when_model_rejects_it(self):
         self.server.fail_queue.append(
             {"status": 400, "body": {"error": "model does not support think"}})
-        with mock.patch("ytpipeline.summarize.time.sleep"):
+        with mock.patch("vidsummarizer.summarize.time.sleep"):
             content, _ = self.client().chat("s", "u", {}, think=True)
         self.assertEqual(len(self.server.chat_requests), 2)
         self.assertTrue(self.server.chat_requests[0]["think"])
@@ -797,7 +797,7 @@ class TestOllamaClient(unittest.TestCase):
     def test_chat_retries_transient_errors(self):
         self.server.fail_queue.extend([{"status": 500, "body": {"e": 1}},
                                        {"status": 500, "body": {"e": 2}}])
-        with mock.patch("ytpipeline.summarize.time.sleep") as sleep:
+        with mock.patch("vidsummarizer.summarize.time.sleep") as sleep:
             content, _ = self.client().chat("s", "u", {})
         self.assertEqual(len(self.server.chat_requests), 3)
         self.assertEqual(sleep.call_count, 2)
@@ -805,14 +805,14 @@ class TestOllamaClient(unittest.TestCase):
 
     def test_chat_empty_content_retried(self):
         self.server.contents = ["", "real answer"]
-        with mock.patch("ytpipeline.summarize.time.sleep"):
+        with mock.patch("vidsummarizer.summarize.time.sleep"):
             content, _ = self.client().chat("s", "u", {})
         self.assertEqual(len(self.server.chat_requests), 2)
         self.assertEqual(content, "real answer")
 
     def test_chat_gives_up_after_retries(self):
         self.server.contents = [""]  # always empty
-        with mock.patch("ytpipeline.summarize.time.sleep"):
+        with mock.patch("vidsummarizer.summarize.time.sleep"):
             assert_dies(self, lambda: self.client().chat("s", "u", {}),
                         pattern="failed after 3 attempts")
 

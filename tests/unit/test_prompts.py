@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.prompts: variant file validation, loading,
+"""Unit tests for vidsummarizer.prompts: variant file validation, loading,
 style metadata (the --style framework) and the shipped prompt files."""
 
 import json
@@ -8,8 +8,8 @@ from pathlib import Path
 
 from tests.helpers import assert_dies
 
-from ytpipeline import prompts as P
-from ytpipeline.prompts import (PromptSet, load_variant, styles_in,
+from vidsummarizer import prompts as P
+from vidsummarizer.prompts import (PromptSet, load_variant, styles_in,
                                 validate_variant, variant_names, write_variant)
 
 REPO_PROMPTS = Path(__file__).resolve().parent.parent.parent / "prompts"

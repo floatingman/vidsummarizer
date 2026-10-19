@@ -1,6 +1,6 @@
 """Benchmark the summarizer's prompt variants and compare their scores.
 
-`yt-pipeline benchmark` runs the summarizer (a local model via Ollama, like
+`vidsummarizer benchmark` runs the summarizer (a local model via Ollama, like
 the rest of the pipeline) over a fixed set of transcripts with one or more
 prompt variants, then scores every produced summary:
 
@@ -12,7 +12,7 @@ prompt variants, then scores every produced summary:
 The result is a comparison report (markdown + JSON + the generated
 summaries) under <workdir>/benchmarks/results/<timestamp>/, naming the
 winner and how to promote it. Promotion itself is a separate, manual step
-(`yt-pipeline prompts promote NAME`), by design: the report informs, the
+(`vidsummarizer prompts promote NAME`), by design: the report informs, the
 human decides. `--min-overall SCORE` turns a run into a quality gate (used
 by `make bench-real`).
 
@@ -36,7 +36,7 @@ from .prompts import (active_name, list_variants, load_variant,
                       resolve_prompts_dir, variant_names)
 from .summarize import Ollama, count_words, gen_options, parse_transcript
 
-TOOL = f"yt-pipeline {VERSION} (benchmark)"
+TOOL = f"vidsummarizer {VERSION} (benchmark)"
 
 # Each failed automatic check subtracts AUTO_PENALTY from the case's overall
 # score (mean of the three judge dimensions) before averaging per variant.
@@ -82,7 +82,7 @@ JUDGE_DIMS = ("faithfulness", "actionability", "clarity")
 def _packaged_set():
     """The benchmarks/ copy packed next to the package (inside the zipapp)."""
     try:
-        d = importlib.resources.files("ytpipeline").joinpath("benchset")
+        d = importlib.resources.files("vidsummarizer").joinpath("benchset")
         return d if (d / "set.json").is_file() else None
     except Exception:
         return None
@@ -384,7 +384,7 @@ def render_report(rows, results, meta):
     lines = [
         "# Prompt benchmark report",
         "",
-        f"- run: {meta['timestamp']}  (yt-pipeline {VERSION})",
+        f"- run: {meta['timestamp']}  (vidsummarizer {VERSION})",
         f"- set: {meta['set_name']} ({meta['n_cases']} cases) from "
         f"`{meta['set_dir']}`",
         f"- summarizer model: {meta['model']}, judge model: "
@@ -429,7 +429,7 @@ def render_report(rows, results, meta):
                 f"{winner['auto_total']} automatic checks). To make it the "
                 "default for future runs:")
             lines.append("")
-            lines.append(f"    yt-pipeline prompts promote {winner['variant']}")
+            lines.append(f"    vidsummarizer prompts promote {winner['variant']}")
     elif winner:
         lines.append("**No variant produced judgeable summaries in this "
                      "run; check the per-case details.**")
@@ -545,7 +545,7 @@ def run_benchmark(args):
     if rows and rows[0]["overall"] is not None \
             and rows[0]["variant"] != active:
         log(f"hint: promote the winner with  "
-            f"yt-pipeline prompts promote {rows[0]['variant']}")
+            f"vidsummarizer prompts promote {rows[0]['variant']}")
 
     if args.min_overall is not None:
         row = next((r for r in rows if r["variant"] == active), None)

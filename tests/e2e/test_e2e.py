@@ -1,4 +1,4 @@
-"""End-to-end tests: the real CLI (`python3 -m ytpipeline`) run as a
+"""End-to-end tests: the real CLI (`python3 -m vidsummarizer`) run as a
 subprocess, with the external tools replaced by fakes.
 
 The fakes in tests/fakes/ are put first on PATH, so the pipeline's yt-dlp,
@@ -16,13 +16,13 @@ from pathlib import Path
 
 from tests.helpers import (FIXTURES, FAKE_BIN, FakeOllamaServer, fake_env,
                            run_cli, tool_log, REPO)
-from ytpipeline.common import safe_name, video_id_in_file
+from vidsummarizer.common import safe_name, video_id_in_file
 
 VID = "dQw4w9WgXcQ"
 VID2 = "jNQXAC9IVRw"
 URL = f"https://www.youtube.com/watch?v={VID}"
 # the fake yt-dlp serves this title for every video unless overridden
-FIXTURE_TITLE = "Me at the zoo (yt-pipeline fixture)"
+FIXTURE_TITLE = "Me at the zoo (vidsummarizer fixture)"
 TRANSCRIPT_NAME = f"{safe_name(FIXTURE_TITLE)}.txt"
 # distinct title handed to VID2 when a test needs two non-colliding videos
 VID2_TITLE = "Second fixture talk"
@@ -100,7 +100,7 @@ class TestBasics(E2ETest):
     def test_version(self):
         r = self.cli("--version")
         self.assertEqual(r.returncode, 0)
-        self.assertRegex(r.stdout, r"yt-pipeline \d+\.\d+\.\d+")
+        self.assertRegex(r.stdout, r"vidsummarizer \d+\.\d+\.\d+")
 
     def test_no_args_prints_help(self):
         r = self.cli()
@@ -179,7 +179,7 @@ class TestTranscribe(E2ETest):
         out = self.workdir / "transcripts" / TRANSCRIPT_NAME
         self.assertTrue(out.exists())
         text = out.read_text(encoding="utf-8")
-        self.assertIn("title: Me at the zoo (yt-pipeline fixture)", text)
+        self.assertIn("title: Me at the zoo (vidsummarizer fixture)", text)
         self.assertIn("channel: jawed", text)
         self.assertIn("upload_date: 2005-04-23", text)
         self.assertIn(f"video_id: {VID}", text)  # id stays discoverable
@@ -311,12 +311,12 @@ class TestTranscribe(E2ETest):
         self.assertIsNotNone(self.transcript_for(VID2))
 
     def test_transcribe_two_processes_same_title_no_loss(self):
-        # regression: two yt-pipeline PROCESSES transcribing different videos
+        # regression: two vidsummarizer PROCESSES transcribing different videos
         # with the same sanitized title must not silently overwrite one
         # transcript (the exists-check/write pair is guarded by a flock)
         import subprocess
         import sys
-        cmd = [sys.executable, "-m", "ytpipeline", "transcribe"]
+        cmd = [sys.executable, "-m", "vidsummarizer", "transcribe"]
         procs = [subprocess.Popen(
             [*cmd, vid, "-j", "1", "--workdir", str(self.workdir)],
             cwd=str(REPO),
@@ -573,7 +573,7 @@ class TestRunPipeline(E2ETest):
         self.assertEqual(r.returncode, 0, r.stderr)
         transcript = self.workdir / "transcripts" / TRANSCRIPT_NAME
         note = (self.workdir / "summaries" /
-                "Me at the zoo (yt-pipeline fixture).md")
+                "Me at the zoo (vidsummarizer fixture).md")
         self.assertTrue(transcript.exists())
         self.assertTrue(note.exists())
         self.assertIn(f"video_id: {VID}", transcript.read_text())
@@ -608,13 +608,13 @@ class TestRunPipeline(E2ETest):
         self.assertIn("is not installed", r.stderr)
         self.assertTrue((self.workdir / "transcripts" / TRANSCRIPT_NAME).exists())
         self.assertFalse((self.workdir / "summaries" /
-                          "Me at the zoo (yt-pipeline fixture).md").exists())
+                          "Me at the zoo (vidsummarizer fixture).md").exists())
 
     def test_run_with_style(self):
         r = self.cli("run", URL, "--style", "study-guide", *self.run_args())
         self.assertEqual(r.returncode, 0, r.stderr)
         note = (self.workdir / "summaries" /
-                "Me at the zoo (yt-pipeline fixture).md")
+                "Me at the zoo (vidsummarizer fixture).md")
         self.assertTrue(note.exists())
         self.assertIn('prompt: "study-guide"', note.read_text("utf-8"))
         user = self.ollama.chat_requests[-1]["messages"][1]["content"]
@@ -625,22 +625,22 @@ class TestRunPipeline(E2ETest):
 class TestZipapp(unittest.TestCase):
     """Optional checks of the built single-file executable when present."""
 
-    EXE = FIXTURES.parent.parent / "dist" / "yt-pipeline"
+    EXE = FIXTURES.parent.parent / "dist" / "vidsummarizer"
 
     def test_built_executable_reports_version(self):
         if not self.EXE.exists():
-            self.skipTest("dist/yt-pipeline not built (run ./build.sh)")
+            self.skipTest("dist/vidsummarizer not built (run ./build.sh)")
         import subprocess, sys
         r = subprocess.run([sys.executable, str(self.EXE), "--version"],
                            capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 0)
-        self.assertIn("yt-pipeline", r.stdout)
+        self.assertIn("vidsummarizer", r.stdout)
 
     def test_built_executable_carries_the_styles(self):
         # the styles are prompt variant files packed into the executable:
         # --style must work with no checkout and no prompts dir anywhere
         if not self.EXE.exists():
-            self.skipTest("dist/yt-pipeline not built (run ./build.sh)")
+            self.skipTest("dist/vidsummarizer not built (run ./build.sh)")
         import subprocess
         import sys
         import tempfile

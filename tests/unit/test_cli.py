@@ -1,4 +1,4 @@
-"""Unit tests for ytpipeline.cli: parser defaults, environment handling,
+"""Unit tests for vidsummarizer.cli: parser defaults, environment handling,
 subcommand dispatch and the bare-URL shorthand."""
 
 import os
@@ -7,7 +7,7 @@ from unittest import mock
 
 from tests.helpers import stderr_of
 
-from ytpipeline import VERSION, cli
+from vidsummarizer import VERSION, cli
 
 
 def parse(argv):
@@ -122,9 +122,9 @@ class TestMainDispatch(unittest.TestCase):
     def run_main(self, argv):
         import contextlib, io
         out, err = io.StringIO(), io.StringIO()
-        with mock.patch("ytpipeline.pipeline.cmd_run",
+        with mock.patch("vidsummarizer.pipeline.cmd_run",
                         return_value=0) as cmd_run, \
-             mock.patch("ytpipeline.pipeline.cmd_doctor",
+             mock.patch("vidsummarizer.pipeline.cmd_doctor",
                         return_value=0) as cmd_doctor:
             with contextlib.redirect_stdout(out), \
                  contextlib.redirect_stderr(err):
@@ -174,7 +174,7 @@ class TestMainDispatch(unittest.TestCase):
     def test_version(self):
         code, out, _, _, _ = self.run_main(["--version"])
         self.assertEqual(code, 0)
-        self.assertIn(f"yt-pipeline {VERSION}", out)
+        self.assertIn(f"vidsummarizer {VERSION}", out)
 
     def test_subcommand_help_shows_examples(self):
         code, out, _, cmd_run, _ = self.run_main(["run", "--help"])

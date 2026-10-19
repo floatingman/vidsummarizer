@@ -1,6 +1,10 @@
 ## What this is
 
-**yt-pipeline {{VERSION}}** is one portable executable for the whole local YouTube pipeline:
+> **3.0.0 is the public-launch release**: the project was renamed from `yt-pipeline` to
+> `vidsummarizer` (same tool, same formats; the repository keeps redirects for the old
+> URL). Earlier tags were published under the old name.
+
+**vidsummarizer {{VERSION}}** is one portable executable for the whole local YouTube pipeline:
 
 ```
 YouTube URL -> yt-dlp (mp3) -> whisper.cpp transcript -> local-LLM summary (Obsidian-ready note)
@@ -9,22 +13,22 @@ YouTube URL -> yt-dlp (mp3) -> whisper.cpp transcript -> local-LLM summary (Obsi
 Audio download, transcription and summarization all run on your machine: no cloud APIs, no API keys. The tool is Python standard library only, so it ships as one small file (a Python zipapp) that can be copied to other computers.
 
 ```bash
-yt-pipeline <url>[,<url>...]   full pipeline in one command (same as 'run')
-yt-pipeline run --batch list.txt -j 2     ...several videos, overlapped jobs
-yt-pipeline fetch <url>        only download the mp3
-yt-pipeline transcribe <url>   only the transcript
-yt-pipeline summarize --all    only the notes (also: by id, url or transcript file)
-yt-pipeline summarize --style short   ...or in another summary style (actionable, study guide, ...)
-yt-pipeline benchmark          score every prompt variant on the benchmark set (LLM judge)
-yt-pipeline prompts            list / show / new / promote the prompt variants
-yt-pipeline doctor             check this machine for everything the pipeline needs
+vidsummarizer <url>[,<url>...]   full pipeline in one command (same as 'run')
+vidsummarizer run --batch list.txt -j 2     ...several videos, overlapped jobs
+vidsummarizer fetch <url>        only download the mp3
+vidsummarizer transcribe <url>   only the transcript
+vidsummarizer summarize --all    only the notes (also: by id, url or transcript file)
+vidsummarizer summarize --style short   ...or in another summary style (actionable, study guide, ...)
+vidsummarizer benchmark          score every prompt variant on the benchmark set (LLM judge)
+vidsummarizer prompts            list / show / new / promote the prompt variants
+vidsummarizer doctor             check this machine for everything the pipeline needs
 ```
 
-Transcripts are LLM-readable plain text; summaries are markdown notes (at most 500 words by default: actionable content preferred, otherwise an overview, or any installed style via `--style`) that import into an Obsidian vault as regular notes. The summarizer's prompts are versioned JSON variants you can list, compare with `benchmark` and promote. Full documentation is in the repo's [README](https://github.com/floatingman/yt-pipeline/blob/master/README.md).
+Transcripts are LLM-readable plain text; summaries are markdown notes (at most 500 words by default: actionable content preferred, otherwise an overview, or any installed style via `--style`) that import into an Obsidian vault as regular notes. The summarizer's prompts are versioned JSON variants you can list, compare with `benchmark` and promote. Full documentation is in the repo's [README](https://github.com/floatingman/vidsummarizer/blob/master/README.md).
 
 ## What the target computer needs
 
-The asset below is a single file that needs a **Python 3.9+** interpreter to run (preinstalled on virtually all Linux distros). Everything else is detected at runtime with a clear install hint instead of a stack trace; `yt-pipeline doctor` prints the full report and exits non-zero when something is missing.
+The asset below is a single file that needs a **Python 3.9+** interpreter to run (preinstalled on virtually all Linux distros). Everything else is detected at runtime with a clear install hint instead of a stack trace; `vidsummarizer doctor` prints the full report and exits non-zero when something is missing.
 
 | Requirement | Needed for | Install |
 |---|---|---|
@@ -39,16 +43,16 @@ Not bundled on purpose (too big / machine-specific): the whisper model files, th
 
 ## Download and run it on another computer
 
-The asset is the executable itself, uncompressed (a single small file; no archive to unpack). Since this repository is private, you must be signed in to GitHub with access to it to download.
+The asset is the executable itself, uncompressed (a single small file; no archive to unpack); anyone can download it from this public repository.
 
 ```bash
-# on the target machine (or download the 'yt-pipeline' asset in the browser):
-gh release download v{{VERSION}} --repo floatingman/yt-pipeline     # needs gh, signed in (note the v: the tag is v<VERSION>)
-# or from the machine that has it: scp yt-pipeline user@host:~/yt-pipeline/
+# on the target machine (or download the 'vidsummarizer' asset in the browser):
+gh release download v{{VERSION}} --repo floatingman/vidsummarizer     # needs gh, signed in (note the v: the tag is v<VERSION>)
+# or from the machine that has it: scp vidsummarizer user@host:~/vidsummarizer/
 
-chmod +x yt-pipeline          # once; it runs from any directory
-./yt-pipeline doctor          # see what is missing on this machine
-./yt-pipeline https://www.youtube.com/watch?v=iCvmsMzlF7o     # end to end
+chmod +x vidsummarizer          # once; it runs from any directory
+./vidsummarizer doctor          # see what is missing on this machine
+./vidsummarizer https://www.youtube.com/watch?v=iCvmsMzlF7o     # end to end
 ```
 
 The file is plain Python in a zip container, so it also runs on a different Linux distribution or CPU architecture than the build machine, as long as that machine has `python3` (3.9 or newer). Data accumulates next to the executable by default (`audio/`, `transcripts/`, `summaries/`, `models/`; override with `--workdir` or `$YT_WORKDIR`).

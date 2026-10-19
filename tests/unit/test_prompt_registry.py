@@ -10,13 +10,13 @@ from unittest import mock
 
 from tests.helpers import assert_dies
 
-from ytpipeline import prompts as P
+from vidsummarizer import prompts as P
 
 REPO_PROMPTS = Path(__file__).resolve().parent.parent.parent / "prompts"
 
 
 # --- regression guard ------------------------------------------------------ #
-# The exact prompt wording of yt-summarize 1.0.0 / yt-pipeline 2.0-2.1, kept
+# The exact prompt wording of yt-summarize 1.0.0 / vidsummarizer 2.0-2.1, kept
 # here as literals. v1-baseline.json must stay byte-identical to it; editing
 # the baseline is a deliberate act that updates this test too.
 ORIG_SYSTEM = 'You are a careful, precise summarizer for a personal note-taking app. You only state facts found in the transcript; you never invent details, numbers, names or claims. You write clean, compact markdown.'

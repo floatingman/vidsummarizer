@@ -1,4 +1,4 @@
-# yt-pipeline test suite (Python stdlib unittest only; see README "Testing").
+# vidsummarizer test suite (Python stdlib unittest only; see README "Testing").
 #
 #   make test        the default suite: unit + E2E, seconds, fully offline
 #                    and deterministic (external tools replaced by fakes)
@@ -10,7 +10,7 @@
 #                    pipeline (needs network + model)
 #   make bench-real  opt-in: real local LLM benchmark of the prompt variants
 #                    (needs ollama + model; quality gate on the active one)
-#   make build       build dist/yt-pipeline (zipapp)
+#   make build       build dist/vidsummarizer (zipapp)
 
 PYTHON ?= python3
 
@@ -31,7 +31,7 @@ test-live:
 	YT_TEST_REAL=1 YT_E2E_LIVE=1 $(PYTHON) -m unittest discover -s tests/real -t .
 
 bench-real:
-	$(PYTHON) -m ytpipeline benchmark --min-overall 3.5
+	$(PYTHON) -m vidsummarizer benchmark --min-overall 3.5
 
 build:
 	./build.sh

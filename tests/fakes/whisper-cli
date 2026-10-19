@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake whisper-cli for yt-pipeline E2E tests (shadowed onto PATH by tests).
+"""Fake whisper-cli for vidsummarizer E2E tests (shadowed onto PATH by tests).
 
 Writes a canned whisper JSON result next to the "-of" base path, mirroring
 the tool's `outbase.with_suffix(".json")` naming.

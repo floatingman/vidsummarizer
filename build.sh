@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Build dist/yt-pipeline: a single self-contained executable file.
+# Build dist/vidsummarizer: a single self-contained executable file.
 #
-# The executable is a Python "zipapp" (.pyz): the whole ytpipeline package is
+# The executable is a Python "zipapp" (.pyz): the whole vidsummarizer package is
 # packed into one file with a '#!/usr/bin/env python3' shebang, so it runs
-# directly (./yt-pipeline ...) on any machine that has Python 3.9+ installed.
+# directly (./vidsummarizer ...) on any machine that has Python 3.9+ installed.
 # Nothing else from this checkout is needed at runtime; external tools
 # (yt-dlp, ffmpeg, whisper-cli, ollama) and model files are detected on the
 # target machine at runtime.
@@ -20,31 +20,35 @@ if ! "$PYTHON" -c "import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)"
     exit 1
 fi
 
-VERSION=$("$PYTHON" -c "import sys; sys.path.insert(0, '.'); from ytpipeline import VERSION; print(VERSION)")
+VERSION=$("$PYTHON" -c "import sys; sys.path.insert(0, '.'); from vidsummarizer import VERSION; print(VERSION)")
 
 rm -rf build dist
-mkdir -p build/ytpipeline/prompts build/ytpipeline/benchset/transcripts dist
+mkdir -p build/vidsummarizer/prompts build/vidsummarizer/benchset/transcripts dist
 
 # Stage only the package (no README, .git, data dirs) into the archive root.
-cp ytpipeline/*.py build/ytpipeline/
+cp vidsummarizer/*.py build/vidsummarizer/
 
 # The summarizer's prompt variants and the benchmark set are data of the
 # package itself, so the executable stays self-contained.
-cp prompts/*.json build/ytpipeline/prompts/
-cp benchmarks/set.json build/ytpipeline/benchset/
-cp benchmarks/transcripts/*.txt build/ytpipeline/benchset/transcripts/
+cp prompts/*.json build/vidsummarizer/prompts/
+cp benchmarks/set.json build/vidsummarizer/benchset/
+cp benchmarks/transcripts/*.txt build/vidsummarizer/benchset/transcripts/
+
+# Ship the MIT notice inside the one-file distribution: the archive is all a
+# recipient gets, and the license requires the notice in all copies.
+cp LICENSE build/
 
 "$PYTHON" -m zipapp build \
     --python "/usr/bin/env python3" \
-    --main "ytpipeline.cli:main" \
+    --main "vidsummarizer.cli:main" \
     --compress \
-    --output "dist/yt-pipeline"
+    --output "dist/vidsummarizer"
 
-chmod +x dist/yt-pipeline
+chmod +x dist/vidsummarizer
 
 # Smoke test the freshly built executable.
-./dist/yt-pipeline --version
-./dist/yt-pipeline prompts list >/dev/null
-echo "built dist/yt-pipeline (yt-pipeline $VERSION, $(du -h dist/yt-pipeline | cut -f1))"
+./dist/vidsummarizer --version
+./dist/vidsummarizer prompts list >/dev/null
+echo "built dist/vidsummarizer (vidsummarizer $VERSION, $(du -h dist/vidsummarizer | cut -f1))"
 echo "transfer it to another machine with e.g.:"
-echo "  scp dist/yt-pipeline user@host:~/yt-pipeline/   # then: ssh user@host 'cd ~/yt-pipeline && ./yt-pipeline doctor'"
+echo "  scp dist/vidsummarizer user@host:~/vidsummarizer/   # then: ssh user@host 'cd ~/vidsummarizer && ./vidsummarizer doctor'"

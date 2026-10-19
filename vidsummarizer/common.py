@@ -1,4 +1,4 @@
-"""Shared helpers for yt-pipeline: logging, subprocess wrapper, video-id
+"""Shared helpers for vidsummarizer: logging, subprocess wrapper, video-id
 parsing, title-based output naming, external-tool detection, and
 work-directory resolution."""
 
@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - non-Unix (no flock)
 
 from . import VERSION
 
-PROG = "yt-pipeline"
+PROG = "vidsummarizer"
 VERSION_LINE = f"{PROG} {VERSION}"
 
 # External tools that cannot be bundled into the executable.
@@ -278,8 +278,8 @@ def titled_path(directory, base, video_id, ext):
 def output_dir_lock(directory):
     """Serialize output-name resolution + write against every other
     writer of the same directory, in this process (naming_lock) and in any
-    other yt-pipeline process (an OS-level flock on the directory's
-    .yt-pipeline.lock file, released automatically even if a process
+    other vidsummarizer process (an OS-level flock on the directory's
+    .vidsummarizer.lock file, released automatically even if a process
     crashes). Without it, two processes transcribing different videos with
     the same sanitized title could interleave titled_path()'s exists-check
     with each other's write and silently drop a transcript; the pre-2.3
@@ -289,7 +289,7 @@ def output_dir_lock(directory):
     directory.mkdir(parents=True, exist_ok=True)
     # "a" never truncates; the file is only a lock token, its content stays
     # empty and it is deliberately never deleted (unlink races re-create it)
-    with open(directory / ".yt-pipeline.lock", "a") as lock_file:
+    with open(directory / ".vidsummarizer.lock", "a") as lock_file:
         unlocked = None
         try:
             if fcntl is not None:
@@ -446,7 +446,7 @@ def base_dir():
 
 def fallback_data_dir():
     xdg = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return Path(xdg).expanduser() / "yt-pipeline"
+    return Path(xdg).expanduser() / "vidsummarizer"
 
 
 def resolve_workdir(explicit=None):
@@ -454,10 +454,10 @@ def resolve_workdir(explicit=None):
 
     The old tools kept audio/, transcripts/, summaries/ and models/ next to
     their script in the project checkout; the executable's own directory is
-    the direct equivalent, so a copied yt-pipeline file plus its data folder
+    the direct equivalent, so a copied vidsummarizer file plus its data folder
     behaves exactly like the old checkouts. If that directory is read-only
     (e.g. the binary was installed into /usr/local/bin), fall back to
-    ~/.local/share/yt-pipeline so the tool still works anywhere.
+    ~/.local/share/vidsummarizer so the tool still works anywhere.
     """
     if explicit:
         return Path(explicit).expanduser()

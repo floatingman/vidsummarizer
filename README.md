@@ -1,35 +1,86 @@
-# yt-pipeline
+# vidsummarizer
 
-One portable executable for the whole local YouTube pipeline:
+**Fully local YouTube transcription and summarization. No cloud, no API keys.**
+
+[![tests](https://github.com/floatingman/vidsummarizer/actions/workflows/ci.yml/badge.svg)](https://github.com/floatingman/vidsummarizer/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/floatingman/vidsummarizer)](https://github.com/floatingman/vidsummarizer/releases/latest)
+[![license](https://img.shields.io/github/license/floatingman/vidsummarizer)](LICENSE)
+
+One portable executable for the whole pipeline:
 
 ```
 YouTube URL -> yt-dlp (mp3) -> whisper.cpp transcript -> local-LLM summary (Obsidian note)
 ```
 
-It merges the two former tools, `yt-transcribe` 1.0.0 (download + transcribe)
-and `yt-summarize` 1.0.0 (local-LLM summary) into a single self-contained
-file. No cloud APIs, no API keys; audio download, transcription and
-summarization all run on your machine. The whole tool is Python standard
-library only, so it ships as one executable file that can be copied to other
-computers.
+<p align="center">
+  <a href="docs/demo.cast" title="asciinema recording of the run shown below"><img src="docs/demo.gif" alt="A real run of vidsummarizer: one command downloads a YouTube video's audio, transcribes it locally with whisper.cpp, summarizes it with a local Ollama model, and prints the resulting Obsidian-ready markdown note."></a>
+</p>
+
+<p align="center"><em>A real run, nothing staged: one command, three local stages, zero cloud.</em></p>
+
+Audio download, transcription and summarization all run on your machine.
+The whole tool is Python standard library only, so it ships as one small
+executable file that can be copied to any computer with Python 3.9+.
+
+## Quickstart
+
+```bash
+curl -LO https://github.com/floatingman/vidsummarizer/releases/latest/download/vidsummarizer
+chmod +x vidsummarizer
+./vidsummarizer https://www.youtube.com/watch?v=iCvmsMzlF7o
+```
+
+That is the whole pipeline: mp3, transcript, summary note. On a fresh
+machine run `./vidsummarizer doctor` first: it checks for `yt-dlp`,
+`ffmpeg`, `whisper-cli` and `ollama`, and prints exactly how to install
+whatever is missing (see ["What the target computer needs"](#what-the-target-computer-needs)
+below).
+
+## Features
+
+- **Fully local and private** - yt-dlp + whisper.cpp + Ollama on your machine. No cloud APIs, no API keys, no accounts; audio and transcripts never leave the computer.
+- **One portable file** - a single ~50 KB executable (a Python zipapp, stdlib only) that runs anywhere Python 3.9+ does; `scp` it to another box and go.
+- **Batch lists** - many videos in one run: several arguments, comma-separated lists, `--batch` files, or any mix; a failing video never stops the batch.
+- **Parallel pipeline** - a worker pool overlaps transcription of later videos with summarization of earlier ones (`-j N`), so batches finish sooner than one-at-a-time.
+- **Summary styles** - `--style actionable | short | study-guide`, or add your own style as a versioned prompt-variant file.
+- **Prompt benchmarking** - `benchmark` scores the prompt variants with deterministic checks plus a local LLM-as-judge, so you promote a measured winner instead of a guess.
+- **Obsidian-ready output** - LLM-readable plain-text transcripts; markdown notes with YAML frontmatter that drop into a vault as regular notes.
+- **Doctor** - `doctor` inventories the machine with per-tool install hints; every command checks its own needs before starting instead of dying mid-run.
+
+## Local vs cloud/API summarizers
+
+| | vidsummarizer | cloud / API-key tools |
+|---|---|---|
+| API key, account | none, ever | required up front |
+| Where audio and transcripts go | stay on your machine | uploaded to a service |
+| Cost after setup | free (your CPU/GPU) | per-video or per-minute fees |
+| Works offline | summarize: yes (saved transcripts, local Ollama + installed model); fetch/transcribe: no, they need YouTube | no |
+| Move to another machine | copy one file | reinstall and re-authenticate |
+| Batch a whole watchlist | `--batch list.txt -j 3` | usually one video at a time |
+
+## Commands
 
 ```
-yt-pipeline <url(s)>            full pipeline in one command (same as 'run')
-yt-pipeline run <url(s)>        ...explicit form, with all stage options
-yt-pipeline fetch <url(s)>      only download the mp3
-yt-pipeline transcribe <url(s)> only the transcript (the old yt-transcribe)
-yt-pipeline summarize <id|url|file> | --all    only the note (the old yt-summarize)
-yt-pipeline benchmark           score & compare the prompt variants
-yt-pipeline prompts <list|show|new|promote>   manage the prompt variants
-yt-pipeline doctor               check this machine for everything the pipeline needs
+vidsummarizer <url(s)>            full pipeline in one command (same as 'run')
+vidsummarizer run <url(s)>        ...explicit form, with all stage options
+vidsummarizer fetch <url(s)>      only download the mp3
+vidsummarizer transcribe <url(s)> only the transcript (the old yt-transcribe)
+vidsummarizer summarize <id|url|file> | --all    only the note (the old yt-summarize)
+vidsummarizer benchmark           score & compare the prompt variants
+vidsummarizer prompts <list|show|new|promote>   manage the prompt variants
+vidsummarizer doctor               check this machine for everything the pipeline needs
 ```
 
-All current behavior of the two original tools is preserved: LLM-readable
-plain-text transcripts, and markdown summaries of at most 500 words
-(actionable content preferred, otherwise an overview) that import into an
-Obsidian vault as regular notes. The summary *style* is selectable per run
-(`--style`: actionable, short, study guide, ...); see "Summary styles"
-below. See "Output formats" below.
+It merges the two former tools, `yt-transcribe` 1.0.0 (download +
+transcribe) and `yt-summarize` 1.0.0 (local-LLM summary) into a single
+self-contained file (released under the name `yt-pipeline` until 3.0.0;
+formats and behavior are unchanged, and the old repository URL redirects
+here). All current behavior of the two original tools is preserved:
+LLM-readable plain-text transcripts, and markdown summaries of at most
+500 words (actionable content preferred, otherwise an overview) that
+import into an Obsidian vault as regular notes. The summary *style* is
+selectable per run (`--style`: actionable, short, study guide, ...); see
+"Summary styles" below. See "Output formats" below.
 
 Every video-taking command (`<url(s)>` above) accepts a whole list of
 videos in one run: several arguments, comma-separated values, a `--batch`
@@ -39,33 +90,33 @@ summarization of earlier ones ("Batch processing" below).
 
 ## The one-file executable
 
-`./build.sh` produces `dist/yt-pipeline`, a single self-contained file
-(~28 KB) built with the Python standard library's `zipapp` module: the whole
-`ytpipeline` package is packed into one executable archive with a
+`./build.sh` produces `dist/vidsummarizer`, a single self-contained file
+(~50 KB) built with the Python standard library's `zipapp` module: the whole
+`vidsummarizer` package is packed into one executable archive with a
 `#!/usr/bin/env python3` shebang. It does not need this checkout, a git
 clone, or any pip packages at runtime; it only needs a Python 3.9+
 interpreter on the machine where it runs.
 
 ```bash
-./build.sh                 # builds and smoke-tests dist/yt-pipeline
-./dist/yt-pipeline --version
+./build.sh                 # builds and smoke-tests dist/vidsummarizer
+./dist/vidsummarizer --version
 ```
 
-(Rebuild after changing any file under `ytpipeline/`. The build stage copies
+(Rebuild after changing any file under `vidsummarizer/`. The build stage copies
 only the package into the archive; README, .git and data never get packed.)
 
 ### Transferring to another computer
 
 ```bash
-scp dist/yt-pipeline user@host:~/yt-pipeline/
-ssh user@host 'cd ~/yt-pipeline && ./yt-pipeline doctor'   # see what's missing
-ssh user@host 'cd ~/yt-pipeline && ./yt-pipeline <youtube-url>'
+scp dist/vidsummarizer user@host:~/vidsummarizer/
+ssh user@host 'cd ~/vidsummarizer && ./vidsummarizer doctor'   # see what's missing
+ssh user@host 'cd ~/vidsummarizer && ./vidsummarizer <youtube-url>'
 ```
 
 The file is plain Python bytecode in a zip container, so it also runs on a
 different Linux distribution or CPU architecture as long as that machine has
 `python3` (3.9 or newer). To run it from a directory not on `PATH`
-invocations, mark it executable once: `chmod +x yt-pipeline`.
+invocations, mark it executable once: `chmod +x vidsummarizer`.
 
 Data (see "Data layout" below) accumulates next to the executable by
 default, exactly like the old project checkouts. Optionally copy the old
@@ -76,7 +127,7 @@ the whisper model is auto-downloaded on first use anyway.
 
 Whatever cannot reasonably live inside the executable is detected at
 runtime, with a clear message about what is missing and how to install it.
-`yt-pipeline doctor` prints the full report; each command also checks its
+`vidsummarizer doctor` prints the full report; each command also checks its
 own needs before starting and exits with an install hint instead of a
 confusing stack trace.
 
@@ -98,8 +149,8 @@ whisper model downloads itself on first use; everything else is reported by
 Example `doctor` output on a machine missing whisper.cpp and Ollama:
 
 ```
-$ ./yt-pipeline doctor
-yt-pipeline 2.1.0 doctor: checking this machine for the local pipeline
+$ ./vidsummarizer doctor
+vidsummarizer 3.0.0 doctor: checking this machine for the local pipeline
 
 Core:
   [ OK ] Python 3.12.3 (/usr/bin/python3)
@@ -109,7 +160,7 @@ Audio + transcription (commands: run, fetch, transcribe):
   [ OK ] ffmpeg 6.1.1  (/usr/bin/ffmpeg)
   [MISS] whisper-cli (transcribes the audio locally (whisper.cpp))
          install: build whisper.cpp from https://github.com/ggml-org/whisper.cpp ...
-  [AUTO] whisper model ggml-small.bin at /home/user/yt-pipeline/models/ggml-small.bin
+  [AUTO] whisper model ggml-small.bin at /home/user/vidsummarizer/models/ggml-small.bin
          (downloaded automatically on first use, ~466 MiB ...)
 
 Summaries (commands: run, summarize):
@@ -117,11 +168,11 @@ Summaries (commands: run, summarize):
          install: install from https://ollama.com, then pull a model with: ollama pull qwen3.6
 
 Data:
-  [ OK ] workdir /home/user/yt-pipeline (writable)
+  [ OK ] workdir /home/user/vidsummarizer (writable)
 
 Result: missing whisper-cli, ollama.
 Without them only these commands can run: fetch.
-Fix the [MISS] items (install hints above) and re-run 'yt-pipeline doctor'.
+Fix the [MISS] items (install hints above) and re-run 'vidsummarizer doctor'.
 ```
 
 `doctor` exits 0 when the full pipeline can run and 1 when something is
@@ -132,11 +183,11 @@ missing, so it can gate automated setups.
 ### Full pipeline
 
 ```bash
-./yt-pipeline https://www.youtube.com/watch?v=iCvmsMzlF7o    # one command, end to end
-./yt-pipeline run iCvmsMzlF7o --timestamps                   # explicit form
-./yt-pipeline run jNQXAC9IVRw --no-keep-audio --stdout       # print the note, delete the mp3
-./yt-pipeline url1,url2,iCvmsMzlF7o                          # a whole list in one run
-./yt-pipeline run --batch watchlist.txt -j 3                 # ...or from a file, 3 at a time
+./vidsummarizer https://www.youtube.com/watch?v=iCvmsMzlF7o    # one command, end to end
+./vidsummarizer run iCvmsMzlF7o --timestamps                   # explicit form
+./vidsummarizer run jNQXAC9IVRw --no-keep-audio --stdout       # print the note, delete the mp3
+./vidsummarizer url1,url2,iCvmsMzlF7o                          # a whole list in one run
+./vidsummarizer run --batch watchlist.txt -j 3                 # ...or from a file, 3 at a time
 ```
 
 Downloads the audio, writes the transcript to `transcripts/<Title>.txt`,
@@ -152,9 +203,9 @@ summarization).
 forms, freely combinable:
 
 ```bash
-./yt-pipeline run https://youtu.be/a,https://youtu.be/b,jNQXAC9IVRw  # comma-separated
-./yt-pipeline run url1 url2 url3                                     # several arguments
-./yt-pipeline run --batch watchlist.txt                              # one video per line
+./vidsummarizer run https://youtu.be/a,https://youtu.be/b,jNQXAC9IVRw  # comma-separated
+./vidsummarizer run url1 url2 url3                                     # several arguments
+./vidsummarizer run --batch watchlist.txt                              # one video per line
 ```
 
 A batch file has one video URL or id per line (anything after a `#` is a
@@ -209,21 +260,21 @@ bounded by the machine:
 ### Individual steps
 
 ```bash
-./yt-pipeline fetch jNQXAC9IVRw                              # mp3 only
-./yt-pipeline fetch --batch list.txt -j 4                    # ...several at once
-./yt-pipeline transcribe jNQXAC9IVRw                         # mp3 -> transcript
-./yt-pipeline transcribe a,b,c --timestamps                  # several, with [MM:SS] markers
-./yt-pipeline transcribe DP-VTlJkzOY --lang de               # force audio language
-./yt-pipeline transcribe -m models/ggml-base.bin <id>        # different (auto-downloaded) model
-./yt-pipeline transcribe --ytdlp '--cookies-from-browser firefox' <id>
-./yt-pipeline summarize iCvmsMzlF7o                          # transcript -> note (by id)
-./yt-pipeline summarize https://youtu.be/iCvmsMzlF7o         # by URL
-./yt-pipeline summarize ~/any/transcript.txt                 # by file
-./yt-pipeline summarize --all                                # every transcript without a note
-./yt-pipeline summarize --all --force                        # redo everything
-./yt-pipeline summarize --all --out ~/vault/Video\ notes     # write straight into a vault
-./yt-pipeline summarize jNQXAC9IVRw --lang en                # force note language
-./yt-pipeline summarize jNQXAC9IVRw --style short            # pick a summary style
+./vidsummarizer fetch jNQXAC9IVRw                              # mp3 only
+./vidsummarizer fetch --batch list.txt -j 4                    # ...several at once
+./vidsummarizer transcribe jNQXAC9IVRw                         # mp3 -> transcript
+./vidsummarizer transcribe a,b,c --timestamps                  # several, with [MM:SS] markers
+./vidsummarizer transcribe DP-VTlJkzOY --lang de               # force audio language
+./vidsummarizer transcribe -m models/ggml-base.bin <id>        # different (auto-downloaded) model
+./vidsummarizer transcribe --ytdlp '--cookies-from-browser firefox' <id>
+./vidsummarizer summarize iCvmsMzlF7o                          # transcript -> note (by id)
+./vidsummarizer summarize https://youtu.be/iCvmsMzlF7o         # by URL
+./vidsummarizer summarize ~/any/transcript.txt                 # by file
+./vidsummarizer summarize --all                                # every transcript without a note
+./vidsummarizer summarize --all --force                        # redo everything
+./vidsummarizer summarize --all --out ~/vault/Video\ notes     # write straight into a vault
+./vidsummarizer summarize jNQXAC9IVRw --lang en                # force note language
+./vidsummarizer summarize jNQXAC9IVRw --style short            # pick a summary style
 ```
 
 Progress goes to stderr; transcripts and notes are files; `--stdout` on
@@ -236,10 +287,10 @@ turned into different kinds of output, chosen with `--style NAME` on
 `summarize` or `run`:
 
 ```bash
-./yt-pipeline summarize iCvmsMzlF7o --style short        # brief overview
-./yt-pipeline summarize iCvmsMzlF7o --style study-guide  # study companion
-./yt-pipeline summarize --all --style short --out ~/vault/Video\ notes
-./yt-pipeline run url1,url2 --style actionable           # full pipeline, action list
+./vidsummarizer summarize iCvmsMzlF7o --style short        # brief overview
+./vidsummarizer summarize iCvmsMzlF7o --style study-guide  # study companion
+./vidsummarizer summarize --all --style short --out ~/vault/Video\ notes
+./vidsummarizer run url1,url2 --style actionable           # full pipeline, action list
 ```
 
 Built-in styles:
@@ -277,7 +328,7 @@ Styles are prompt variant files with a small `style` block, so adding one
 is a new file, not a code change:
 
 1. Copy a starting point:
-   `yt-pipeline prompts new deep-dive --from study-guide`
+   `vidsummarizer prompts new deep-dive --from study-guide`
    (creates `<workdir>/prompts/deep-dive.json`; in a source checkout it
    lands in the repo's `prompts/`, where you can also just copy a `.json`
    file by hand).
@@ -294,11 +345,11 @@ is a new file, not a code change:
      has no `##` heading). A variant without a `style` block is a plain
      variant: still selectable with `--style NAME`, just not advertised as
      a style.
-   - set `description` (shown by `yt-pipeline prompts list`) and bump
+   - set `description` (shown by `vidsummarizer prompts list`) and bump
      `version` when you later change a file that exists somewhere.
 3. Use and compare it:
-   `yt-pipeline summarize <id> --style deep-dive`, and
-   `yt-pipeline benchmark --prompts deep-dive,study-guide` to score it
+   `vidsummarizer summarize <id> --style deep-dive`, and
+   `vidsummarizer benchmark --prompts deep-dive,study-guide` to score it
    against another style on the benchmark set.
 
 Names are lowercase letters, digits and dashes, matching the file name
@@ -307,7 +358,7 @@ Names are lowercase letters, digits and dashes, matching the file name
 message, so a typo fails at startup instead of mid-summary. Which
 directory the files come from follows the usual prompts resolution
 (`--prompts-dir`, `$YT_PROMPTS_DIR`, `<workdir>/prompts`, the copy bundled
-into the executable); `yt-pipeline prompts list` shows the directory in
+into the executable); `vidsummarizer prompts list` shows the directory in
 use and everything it found.
 
 ### Prompt benchmarking (`benchmark`)
@@ -317,10 +368,10 @@ of guessed at. `benchmark` runs the summarizer over a fixed benchmark set
 of transcripts with one or more prompt variants and scores every summary:
 
 ```bash
-yt-pipeline benchmark                              # every variant in the prompts dir
-yt-pipeline benchmark --prompts v1-baseline,short  # just these, compared
-yt-pipeline benchmark --judge-model llama3.2       # a different local judge
-yt-pipeline benchmark --min-overall 3.5            # quality gate (make bench-real)
+vidsummarizer benchmark                              # every variant in the prompts dir
+vidsummarizer benchmark --prompts v1-baseline,short  # just these, compared
+vidsummarizer benchmark --judge-model llama3.2       # a different local judge
+vidsummarizer benchmark --min-overall 3.5            # quality gate (make bench-real)
 ```
 
 **The benchmark set** is `benchmarks/set.json` plus
@@ -351,7 +402,7 @@ little from run to run; compare variants within one run, and re-run to
 confirm a close call.
 
 **Promoting a winner is manual, by design**: the report informs, the
-human decides. `yt-pipeline prompts promote NAME` asks for confirmation
+human decides. `vidsummarizer prompts promote NAME` asks for confirmation
 (`--yes` skips it), then points `active.txt` in the prompts directory at
 the winner, and every later `run`/`summarize` uses it. In a checkout that
 pointer is a versioned file in `prompts/` (commit it); with a deployed
@@ -413,7 +464,7 @@ Summarization stage (`run`, `summarize`):
 `summarize` only: `--all`, `--transcripts DIR` (default `$YT_TRANSCRIPTS_DIR`
 else `<workdir>/transcripts`). `benchmark` and `prompts` have their own
 options (sets, judge model, quality gate, confirmation); see
-`yt-pipeline benchmark --help` / `yt-pipeline prompts --help`. All
+`vidsummarizer benchmark --help` / `vidsummarizer prompts --help`. All
 commands: `--workdir DIR` (default `$YT_WORKDIR`, else the executable's
 own directory).
 
@@ -429,7 +480,7 @@ Everything lives in one work directory, resolved in this order:
 2. `$YT_WORKDIR`
 3. the directory containing the executable (like the old project checkouts)
 4. if that is read-only (e.g. the binary was installed to `/usr/local/bin`):
-   `~/.local/share/yt-pipeline` (with a notice on stderr)
+   `~/.local/share/vidsummarizer` (with a notice on stderr)
 
 ```
 <workdir>/
@@ -494,7 +545,7 @@ Only what the merge itself forces; formats and pipeline behavior are
 unchanged:
 
 - The `tool:` transcript line and `summarizer:` frontmatter now say
-  `yt-pipeline 2.1.0` instead of the old tool names.
+  `vidsummarizer 3.0.0` instead of the old tool names.
 - One work directory (see above) instead of two sibling checkouts;
   `yt-summarize`'s machine-specific default transcript path is gone
   (`--transcripts` and `$YT_TRANSCRIPTS_DIR` still work).
@@ -509,8 +560,8 @@ unchanged:
 ## Development
 
 ```
-yt-pipeline/
-  ytpipeline/            the tool (Python stdlib only)
+vidsummarizer/
+  vidsummarizer/            the tool (Python stdlib only)
     cli.py               argument parsing and subcommand dispatch
     common.py            shared helpers, tool detection, workdir resolution,
                          video-list parsing, thread-safe tagged logging
@@ -523,13 +574,13 @@ yt-pipeline/
   tests/                 unit + E2E test suite: `make test` (see Testing)
   prompts/               the summarizer's prompt variants (versioned JSON)
   benchmarks/            fixed benchmark set (set.json + transcripts/)
-  build.sh               builds dist/yt-pipeline (zipapp)
+  build.sh               builds dist/vidsummarizer (zipapp)
   Makefile               test / build entry points
   .github/               CI workflows: test gate + automated releases (see below)
   README.md
 ```
 
-Run from the checkout without building: `python3 -m ytpipeline <command> ...`
+Run from the checkout without building: `python3 -m vidsummarizer <command> ...`
 (same behavior; the workdir then defaults to the repo root).
 
 ## Testing
@@ -561,7 +612,7 @@ make bench-real  # opt-in: benchmark the prompt variants with the real
   reports),
   the Ollama HTTP client (against an in-process fake server), the worker
   pool's failure containment, and the CLI parser/dispatch.
-- **E2E tests** (`tests/e2e/`) run the real CLI (`python3 -m ytpipeline`)
+- **E2E tests** (`tests/e2e/`) run the real CLI (`python3 -m vidsummarizer`)
   as a subprocess through the whole flow. `tests/fakes/` is put first on
   `PATH`, so yt-dlp, whisper-cli, ffmpeg and ollama are stubs serving the
   fixtures, and an in-process fake Ollama HTTP server answers the summarize
@@ -574,7 +625,7 @@ make bench-real  # opt-in: benchmark the prompt variants with the real
   benchmark and prompts commands (report writing, the `--min-overall`
   gate, promotion with and without confirmation) against the fake server
   doubling as the judge. If
-  `dist/yt-pipeline` exists, extra checks run the built executable too
+  `dist/vidsummarizer` exists, extra checks run the built executable too
   (including one `--style` run, proving the styles are packed into it).
 
 ### Fixtures (`tests/fixtures/`)
@@ -619,8 +670,8 @@ releases automatically:
   (it must detect the missing tools and exit 1). The suite is offline and
   deterministic, so a red gate always means a real regression.
 - **Every push to `master`** then publishes: if the `VERSION` in
-  `ytpipeline/__init__.py` has no `v<VERSION>` release yet, the workflow
-  tags that commit, builds `dist/yt-pipeline` and attaches it
+  `vidsummarizer/__init__.py` has no `v<VERSION>` release yet, the workflow
+  tags that commit, builds `dist/vidsummarizer` and attaches it
   (uncompressed, as documented above) to a GitHub Release with notes from
   `.github/release-notes-template.md` plus the commits since the previous
   release, each with its full message
@@ -640,7 +691,7 @@ So the normal release procedure is: bump `VERSION`, update docs if needed,
 - **"model 'qwen3.6' is not installed"**: `ollama pull qwen3.6`, or pick
   another with `--model`; `ollama list` shows what is installed.
 - **Ollama not running**: `run`/`summarize` start `ollama serve`
-  automatically (log: `/tmp/ollama-serve-yt-pipeline.log`); with
+  automatically (log: `/tmp/ollama-serve-vidsummarizer.log`); with
   `--no-autostart`, start it yourself (`systemctl start ollama`).
 - **First transcription on a new machine is slow to start**: it downloads
   the ~466 MiB whisper model once into `<workdir>/models/`.

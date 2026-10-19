@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fake ffmpeg for yt-pipeline E2E tests (shadowed onto PATH by tests).
+"""Fake ffmpeg for vidsummarizer E2E tests (shadowed onto PATH by tests).
 
 `-version` prints a version line (used by doctor); conversion mode writes a
 placeholder file at the output path (its bytes are never inspected because

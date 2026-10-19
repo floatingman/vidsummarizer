@@ -1,4 +1,4 @@
-"""yt-pipeline: local YouTube transcription and summarization pipeline.
+"""vidsummarizer: local YouTube transcription and summarization pipeline.
 
 Merges the former yt-transcribe and yt-summarize tools into one portable
 executable:
@@ -9,4 +9,4 @@ Everything runs locally; no cloud APIs, no API keys. Only the Python
 standard library is used, so the whole tool ships as a single zipapp file.
 """
 
-VERSION = "2.3.0"
+VERSION = "3.0.0"
