@@ -14,8 +14,9 @@ from tests.helpers import (FakeOllamaServer, assert_dies, capture, ns,
 from vidsummarizer import summarize
 from vidsummarizer.summarize import (Ollama, build_note, chunk_text,
                                   clean_markdown, count_words, gen_options,
-                                  output_path, parse_transcript,
-                                  resolve_transcripts, safe_name, sentences,
+                                  ensure_video_url, output_path,
+                                  parse_transcript, resolve_transcripts,
+                                  safe_name, sentences, source_link,
                                   summarize_targets, summarize_transcript,
                                   summarized_video_ids, trim_to_word_cap,
                                   yaml_str)
@@ -319,7 +320,7 @@ class TestBuildNote(unittest.TestCase):
         meta_line = [ln for ln in lines if ln.startswith("**Channel:**")][0]
         self.assertIn("**Published:** 2024-01-02", meta_line)
         self.assertIn("**Duration:** 01:01", meta_line)
-        self.assertIn("[Watch on YouTube](https://www.youtube.com/watch?v=FxTureVid01)",
+        self.assertIn("**Source:** [Fixture Talk - Testing Pipelines](https://www.youtube.com/watch?v=FxTureVid01)",
                       lines)
         self.assertIn("## Overview", lines)
         self.assertIn("generated locally by vidsummarizer", note)
@@ -329,7 +330,110 @@ class TestBuildNote(unittest.TestCase):
         note = build_note("T", {}, STUB_NOTE, 5, "m")
         self.assertNotIn("**Channel:**", note)
         self.assertNotIn("**Published:**", note)
-        self.assertNotIn("[Watch on YouTube]", note)
+        self.assertNotIn("**Source:**", note)  # no url, no id: no line
+        self.assertIn('url: ""', note)  # frontmatter stays well-formed
+
+    def test_source_line_links_the_title(self):
+        note = build_note(self.META["title"], self.META, STUB_NOTE, 5, "m")
+        src = [ln for ln in note.splitlines() if ln.startswith("**Source:**")]
+        self.assertEqual(src, ["**Source:** [Fixture Talk - Testing "
+                               "Pipelines](https://www.youtube.com/watch?"
+                               "v=FxTureVid01)"])
+
+    def test_source_line_plain_url_when_title_breaks_link_syntax(self):
+        title = "A [bracketed] talk"
+        note = build_note(title, dict(self.META, title=title), STUB_NOTE, 5,
+                          "m")
+        src = [ln for ln in note.splitlines() if ln.startswith("**Source:**")]
+        self.assertEqual(src, [f"**Source:** {self.META['url']}"])
+
+    def test_source_line_plain_url_for_runaway_title(self):
+        title = "L" * 200
+        note = build_note(title, dict(self.META, title=title), STUB_NOTE, 5,
+                          "m")
+        src = [ln for ln in note.splitlines() if ln.startswith("**Source:**")]
+        self.assertEqual(src, [f"**Source:** {self.META['url']}"])
+
+    def test_url_rebuilt_from_video_id_when_header_lacks_it(self):
+        # an old transcript that predates the url header line still yields
+        # a clickable source link, rebuilt from its video id
+        meta = {k: v for k, v in self.META.items() if k != "url"}
+        note = build_note(meta["title"], meta, STUB_NOTE, 5, "m")
+        url = "https://www.youtube.com/watch?v=FxTureVid01"
+        self.assertIn(f"**Source:** [Fixture Talk - Testing Pipelines]({url})",
+                      note)
+        self.assertIn(f'url: "{url}"', note)  # frontmatter agrees
+        self.assertEqual(meta["url"], url)     # meta filled in
+
+    def test_bare_id_url_header_upgraded_to_watch_form(self):
+        meta = dict(self.META, url="FxTureVid01")
+        note = build_note(meta["title"], meta, STUB_NOTE, 5, "m")
+        self.assertIn("(https://www.youtube.com/watch?v=FxTureVid01)", note)
+        self.assertNotIn("(FxTureVid01)", note)
+
+    def test_source_line_placed_near_the_top_before_the_summary(self):
+        note = build_note(self.META["title"], self.META, STUB_NOTE, 5, "m")
+        lines = note.splitlines()
+        self.assertLess(lines.index("# Fixture Talk - Testing Pipelines"),
+                        next(i for i, ln in enumerate(lines)
+                             if ln.startswith("**Source:**")))
+        self.assertLess(next(i for i, ln in enumerate(lines)
+                             if ln.startswith("**Source:**")),
+                        lines.index("## Overview"))
+
+
+class TestSourceLink(unittest.TestCase):
+    URL = "https://www.youtube.com/watch?v=FxTureVid01"
+
+    def test_title_becomes_the_link_text(self):
+        self.assertEqual(source_link("A Talk", self.URL),
+                         f"[A Talk]({self.URL})")
+
+    def test_title_whitespace_collapsed(self):
+        self.assertEqual(source_link("A   Talk", self.URL),
+                         f"[A Talk]({self.URL})")
+
+    def test_length_cap_is_inclusive(self):
+        self.assertEqual(source_link("L" * 80, self.URL),
+                         f"[{'L' * 80}]({self.URL})")
+        self.assertEqual(source_link("L" * 81, self.URL), self.URL)
+
+    def test_broken_or_empty_titles_fall_back_to_the_plain_url(self):
+        for bad in ("A [x] talk", "]just a bracket", "back\\slash", ""):
+            self.assertEqual(source_link(bad, self.URL), self.URL)
+
+    def test_parentheses_in_a_title_are_fine(self):
+        # parens are legal in link TEXT (only the (...) part is parseable)
+        self.assertEqual(source_link("Me at the zoo (fixture)", self.URL),
+                         f"[Me at the zoo (fixture)]({self.URL})")
+
+
+class TestEnsureVideoUrl(unittest.TestCase):
+    def test_header_url_kept_verbatim(self):
+        meta = {"url": "https://www.youtube.com/watch?v=abcdefghijk"}
+        self.assertEqual(ensure_video_url(meta),
+                         "https://www.youtube.com/watch?v=abcdefghijk")
+
+    def test_bare_id_url_upgraded(self):
+        meta = {"url": "abcdefghijk"}
+        self.assertEqual(ensure_video_url(meta),
+                         "https://www.youtube.com/watch?v=abcdefghijk")
+
+    def test_rebuilt_from_video_id(self):
+        meta = {"video_id": "abcdefghijk"}
+        self.assertEqual(ensure_video_url(meta),
+                         "https://www.youtube.com/watch?v=abcdefghijk")
+        self.assertEqual(meta["url"],
+                         "https://www.youtube.com/watch?v=abcdefghijk")
+
+    def test_junk_video_id_yields_no_url(self):
+        # only a real 11-char id can build a real link
+        meta = {"video_id": "not-a-real-id"}
+        self.assertEqual(ensure_video_url(meta), "")
+        self.assertNotIn("url", meta)
+
+    def test_neither_url_nor_id_is_empty(self):
+        self.assertEqual(ensure_video_url({}), "")
 
 
 # --------------------------------------------------------------------------- #
@@ -517,6 +621,36 @@ class TestSummarizeTranscript(unittest.TestCase):
         self.assertIn("## Overview", note)
         self.assertIn("lazy dog", note)
         self.assertIn('title: "Fixture Talk - Testing Pipelines"', note)
+        # the header's url becomes a visible, clickable Source line
+        self.assertIn("**Source:** [Fixture Talk - Testing Pipelines]"
+                      "(https://www.youtube.com/watch?v=FxTureVid01)", note)
+
+    def test_note_rebuilds_source_url_when_header_lacks_it(self):
+        # an old transcript without a url line: the link is rebuilt from the
+        # video_id instead of being dropped
+        text = SAMPLE.replace(
+            "url: https://www.youtube.com/watch?v=FxTureVid01\n", "")
+        p = self.dir / "NoUrlVid001.txt"
+        p.write_text(text.replace("FxTureVid01", "NoUrlVid001"),
+                     encoding="utf-8")
+        stub = StubOllama()
+        (note, info), _ = capture(
+            lambda: summarize_transcript(stub, str(p), opts()))
+        self.assertIn("**Source:** [Fixture Talk - Testing Pipelines]"
+                      "(https://www.youtube.com/watch?v=NoUrlVid001)", note)
+
+    def test_plain_text_transcript_omits_source_line_cleanly(self):
+        # no header, no id in the name: nothing to link, but the note is
+        # still written and well-formed
+        p = self.dir / "plain notes.txt"
+        p.write_text("Just words, no header at all.\n\nSecond paragraph.\n",
+                     encoding="utf-8")
+        stub = StubOllama()
+        (note, info), _ = capture(
+            lambda: summarize_transcript(stub, str(p), opts()))
+        self.assertIn("## Overview", note)
+        self.assertNotIn("**Source:**", note)
+        self.assertIn('url: ""', note)
 
     def test_chunked_map_reduce(self):
         # body is ~45 words; force chunking with a tiny chunk size

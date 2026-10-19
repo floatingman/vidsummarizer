@@ -434,9 +434,41 @@ class TestTranscribeVideo(unittest.TestCase):
         text = out.read_text()
         self.assertIn("title: T", text)
         self.assertIn(f"video_id: {VID}", text)
+        self.assertIn(f"url: {URL}", text)  # full clickable watch URL
         self.assertIn("language: en", text)  # detected by whisper
         self.assertIn("The quick brown fox", text)
         self.assertTrue(self.audio.exists())  # kept
+
+    def test_url_header_is_watch_form_for_every_input_form(self):
+        # however the video was given, the header's url is the canonical
+        # https://www.youtube.com/watch?v=<id> form, never a bare id or the
+        # input's original shape
+        forms = [
+            URL,                                                    # watch
+            f"https://youtu.be/{VID}",                              # short
+            f"https://www.youtube.com/shorts/{VID}",               # shorts
+            f"https://www.youtube.com/live/{VID}",                 # live
+            f"https://www.youtube.com/embed/{VID}",                # embed
+            f"https://music.youtube.com/watch?v={VID}",            # mirror
+            VID,                                                    # bare id
+        ]
+        self._stub()
+        for form in forms:
+            with self.subTest(form=form):
+                out = transcribe.transcribe_video(self.opts(video=form),
+                                                  self.workdir)
+                self.assertIn(f"url: {URL}\n", out.read_text())
+
+    def test_url_survives_re_read_under_the_title_name(self):
+        # the url lives in the file header, so re-reading a title-named
+        # transcript (summarize --all, batch flows) still carries it
+        from vidsummarizer.summarize import parse_transcript
+        self._stub()
+        out = transcribe.transcribe_video(self.opts(), self.workdir)
+        self.assertEqual(out.name, "T.txt")  # title-named, not <id>.txt
+        meta, _ = parse_transcript(out.read_text(encoding="utf-8"))
+        self.assertEqual(meta["url"], URL)
+        self.assertEqual(meta["video_id"], VID)
 
     def _seed_transcript(self, name, video_id):
         tdir = self.workdir / "transcripts"
