@@ -507,14 +507,26 @@ id-named file with the title-named one.
 `video_id`, `url`, `language`, `model`, `tool`), one blank line, then the
 transcript as paragraphs split at silence gaps of >= 1.5 s (soft cap ~280
 words at sentence ends, hard cap 500 words). Designed for LLM consumption.
+The `url` line is always the full, clickable watch URL
+(`https://www.youtube.com/watch?v=<id>`) no matter how the video was given
+(watch link, `youtu.be`, `shorts`/`live`/`embed` link, or a bare id), and
+because it lives in the header it survives the title-based file naming,
+renames and re-reads (`summarize --all`, batch runs) untouched.
 
 **Summary note** (`summaries/<Title>.md`): Obsidian-ready markdown with YAML
 frontmatter properties (`title`, `channel`, `date`, `url`, `video_id`,
 `duration`, `language`, `transcribed_with`, `summarized_with`, `prompt`,
 `summary_words`, `summarizer`, `created`, `tags`), a `# title` heading, a
-source line with the YouTube link, then the summary: `## Actionable
+visible `**Source:**` line near the top linking the video title to its
+YouTube URL, then the summary: `## Actionable
 summary` with numbered `### Actionable steps` when the video has actionable
-content, otherwise a `## Overview` of 2-4 paragraphs. With `--style NAME`
+content, otherwise a `## Overview` of 2-4 paragraphs. The Source line uses
+the plain URL when the title is too long or contains characters that would
+break a markdown link, and it stays a working clickable link after the note
+is imported into an Obsidian vault. Its URL is taken from the transcript
+header (`url:`); when an old transcript predates that line, it is rebuilt
+from the `video_id`, and when the file has neither, the line is cleanly
+omitted. With `--style NAME`
 the body instead takes that style's shape (see "Summary styles"), and the
 `prompt:` frontmatter property records which prompt variant (style) wrote
 the note. The summary body is capped at 500 words (`--max-words`, or the
@@ -546,6 +558,10 @@ unchanged:
 
 - The `tool:` transcript line and `summarizer:` frontmatter now say
   `vidsummarizer 3.0.0` instead of the old tool names.
+- The summary note's link to the video is now a `**Source:**` line with the
+  video title as the link text (it was a fixed `[Watch on YouTube]`
+  label), and the URL is rebuilt from the `video_id` when an old
+  transcript predates the `url:` header line.
 - One work directory (see above) instead of two sibling checkouts;
   `yt-summarize`'s machine-specific default transcript path is gone
   (`--transcripts` and `$YT_TRANSCRIPTS_DIR` still work).

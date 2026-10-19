@@ -27,9 +27,9 @@ import urllib.request
 from datetime import datetime, timezone
 
 from . import VERSION
-from .common import (die, find_transcript, legacy_video_id, log,
+from .common import (ID_RE, die, find_transcript, legacy_video_id, log,
                      output_dir_lock, safe_name, titled_path, warn,
-                     write_text_atomic)  # safe_name is re-exported
+                     watch_url, write_text_atomic)  # safe_name is re-exported
 
 TOOL = f"vidsummarizer {VERSION} (local LLM via Ollama)"
 
@@ -140,6 +140,42 @@ def ensure_video_id(meta, path):
     if vid:
         meta["video_id"] = vid
     return vid
+
+
+def ensure_video_url(meta):
+    """The source video URL for a note: the transcript header's `url` when
+    it has one, else rebuilt from the video id (transcripts written before
+    the url line existed carry only the id), else '' when the file has
+    neither. Fills in meta['url'] so the note's frontmatter and its visible
+    Source line agree on one URL; a bare id in an old header is upgraded to
+    the full watch form so the link is actually clickable."""
+    url = str(meta.get("url") or "").strip()
+    if ID_RE.match(url):  # a bare id is not a clickable link
+        url = watch_url(url)
+    if not url:
+        vid = str(meta.get("video_id") or "")
+        if ID_RE.match(vid):
+            url = watch_url(vid)
+    if url:
+        meta["url"] = url
+    return url
+
+
+# A title that would break or bloat a markdown [text](url) link
+LINK_UNSAFE_TEXT = re.compile(r"[\[\]\\\x00-\x1f]")
+SOURCE_LINK_MAX_CHARS = 80  # past this, the plain URL reads better
+
+
+def source_link(title, url):
+    """The clickable source reference for a note's Source line: the video
+    title as a markdown link to the YouTube URL, or the plain URL when the
+    title would make the link unwieldy or broken (brackets or backslashes
+    break the [text](url) syntax; a runaway title dwarfs the line)."""
+    text = " ".join(str(title or "").split())
+    if text and len(text) <= SOURCE_LINK_MAX_CHARS \
+            and not LINK_UNSAFE_TEXT.search(text):
+        return f"[{text}]({url})"
+    return str(url)
 
 
 def transcript_language_instruction(meta, body):
@@ -465,12 +501,13 @@ def summarize_transcript(ollama, path, opts):
 
 
 def build_note(title, meta, summary, summary_words, model, prompt_name=""):
+    url = ensure_video_url(meta)
     fm = [
         "---",
         f"title: {yaml_str(title)}",
         f"channel: {yaml_str(meta.get('channel', 'unknown'))}",
         f"date: {yaml_str(meta.get('upload_date', ''))}",
-        f"url: {yaml_str(meta.get('url', ''))}",
+        f"url: {yaml_str(url)}",
         f"video_id: {yaml_str(meta.get('video_id', ''))}",
         f"duration: {yaml_str(meta.get('duration', ''))}",
         f"language: {yaml_str(meta.get('language', ''))}",
@@ -496,8 +533,10 @@ def build_note(title, meta, summary, summary_words, model, prompt_name=""):
     parts = ["\n".join(fm), "", f"# {title}", ""]
     if header_meta:
         parts.append(" · ".join(header_meta) + "\n")
-    if meta.get("url"):
-        parts.append(f"[Watch on YouTube]({meta['url']})\n")
+    # the source link is visible in the note body, not just frontmatter,
+    # so it stays clickable wherever the note travels (Obsidian, GitHub, ...)
+    if url:
+        parts.append(f"**Source:** {source_link(title, url)}\n")
     parts.append(summary)
     parts.append("\n---\n")
     parts.append(f"*Summary generated locally by vidsummarizer {VERSION} with "

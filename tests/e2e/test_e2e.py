@@ -183,11 +183,26 @@ class TestTranscribe(E2ETest):
         self.assertIn("channel: jawed", text)
         self.assertIn("upload_date: 2005-04-23", text)
         self.assertIn(f"video_id: {VID}", text)  # id stays discoverable
+        self.assertIn(f"url: {URL}", text)  # full clickable watch URL
         self.assertIn("language: en", text)
         header, body = text.split("\n\n", 1)
         self.assertEqual(body.strip(), "\n\n".join(EXPECTED_PARAS))
         # audio is kept by default after transcription
         self.assertTrue((self.workdir / "audio" / f"{VID}.mp3").exists())
+
+    def test_transcribe_url_header_is_watch_form_for_every_input_form(self):
+        # youtu.be / shorts / bare id inputs all end up as the canonical
+        # watch URL in the header, never a bare id or the input's shape
+        for form in (f"https://youtu.be/{VID}",
+                     f"https://www.youtube.com/shorts/{VID}",
+                     f"https://www.youtube.com/live/{VID}",
+                     VID):
+            with self.subTest(form=form):
+                r = self.cli("transcribe", form, "--workdir", self.workdir)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                text = (self.workdir / "transcripts" /
+                        TRANSCRIPT_NAME).read_text(encoding="utf-8")
+                self.assertIn(f"url: {URL}\n", text)
 
     def test_transcribe_sanitizes_hostile_title(self):
         hostile = 'What? A "great" video: part/1 *best*'
@@ -373,8 +388,8 @@ class TestSummarize(E2ETest):
         self.assertIn('video_id: "FxTureVid01"', note)
         self.assertIn("tags: [youtube, video-summary]", note)
         self.assertIn("# Fixture Talk - Testing Pipelines", note)
-        self.assertIn("[Watch on YouTube](https://www.youtube.com/watch?v=FxTureVid01)",
-                      note)
+        self.assertIn("**Source:** [Fixture Talk - Testing Pipelines]"
+                      "(https://www.youtube.com/watch?v=FxTureVid01)", note)
         self.assertIn("## Overview", note)
         # the request carried the transcript and its language
         req = self.ollama.chat_requests[-1]
@@ -390,6 +405,36 @@ class TestSummarize(E2ETest):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertTrue(
             (self.workdir / "summaries" / "Fixture Talk - Testing Pipelines.md").exists())
+
+    def test_summarize_rebuilds_source_url_for_old_transcript(self):
+        # an old transcript whose header predates the url line: the note's
+        # Source link is rebuilt from the video id instead of dropped
+        path = self.seed_transcript()
+        text = path.read_text(encoding="utf-8")
+        path.write_text(text.replace(
+            "url: https://www.youtube.com/watch?v=FxTureVid01\n", ""),
+            encoding="utf-8")
+        r = self.cli("summarize", "FxTureVid01", *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        note = (self.workdir / "summaries" /
+                "Fixture Talk - Testing Pipelines.md").read_text(
+                    encoding="utf-8")
+        self.assertIn("**Source:** [Fixture Talk - Testing Pipelines]"
+                      "(https://www.youtube.com/watch?v=FxTureVid01)", note)
+
+    def test_summarize_transcript_without_url_or_id_omits_source(self):
+        # a plain text file passed directly: no header, no id in the name;
+        # the note is written cleanly with no Source line
+        p = self.workdir / "plain.txt"
+        p.write_text("Just words, nothing else here.\n\nSecond paragraph.\n",
+                     encoding="utf-8")
+        r = self.cli("summarize", str(p), *self.summarize_args())
+        self.assertEqual(r.returncode, 0, r.stderr)
+        note = (self.workdir / "summaries" / "plain.md").read_text(
+            encoding="utf-8")
+        self.assertIn("## Overview", note)
+        self.assertNotIn("**Source:**", note)
+        self.assertIn('url: ""', note)
 
     def test_summarize_by_url_and_by_file_path(self):
         self.seed_transcript()
@@ -577,7 +622,12 @@ class TestRunPipeline(E2ETest):
         self.assertTrue(transcript.exists())
         self.assertTrue(note.exists())
         self.assertIn(f"video_id: {VID}", transcript.read_text())
-        self.assertIn('video_id: "dQw4w9WgXcQ"', note.read_text())
+        note_text = note.read_text(encoding="utf-8")
+        self.assertIn('video_id: "dQw4w9WgXcQ"', note_text)
+        # end to end: the header url becomes the note's clickable Source line
+        self.assertIn("**Source:** [Me at the zoo (vidsummarizer fixture)]"
+                      "(https://www.youtube.com/watch?v=dQw4w9WgXcQ)",
+                      note_text)
         self.assertEqual(len(self.ollama.chat_requests), 1)
 
     def test_bare_url_shorthand_runs_full_pipeline(self):
